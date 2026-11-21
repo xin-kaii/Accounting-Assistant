@@ -1,0 +1,37 @@
+# 统一换行符，避免脚本被换成错误格式后跑不起来
+#
+# 背景：run.bat 一度被保存成 LF 换行，双击后 cmd 把 if 块解析错位，
+# 报出一堆 'xxx' is not recognized。批处理文件必须是 CRLF。
+
+* text=auto
+
+# Windows 批处理：必须是 CRLF，且与用户的 core.autocrlf 设置无关
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# shell 脚本：必须是 LF（CRLF 会让 bash 报 $'\r': command not found）
+*.sh text eol=lf
+
+# 代码与配置：统一 LF
+*.py   text eol=lf
+*.sql  text eol=lf
+*.toml text eol=lf
+*.txt  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+Dockerfile       text eol=lf
+.dockerignore    text eol=lf
+.gitignore       text eol=lf
+.env.example     text eol=lf
+
+# 文档：LF
+*.md text eol=lf
+
+# 二进制：不做任何转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.db   binary
