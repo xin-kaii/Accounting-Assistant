@@ -1,0 +1,11 @@
+# Streamlit 项目配置（提交进仓库，队友和评审都不用再处理首次启动的引导）
+
+[browser]
+# 关掉使用统计上报，同时跳过首次启动那句「Please enter your email address」
+gatherUsageStats = false
+
+[server]
+# 固定端口，和 README、Dockerfile、docker-compose.yml 保持一致
+port = 8501
+# 允许上传的小票图片大小上限（MB）。C 那边会校验 5MB，这里留足余量
+maxUploadSize = 10

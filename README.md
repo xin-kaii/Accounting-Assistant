@@ -91,6 +91,9 @@ pip install -r requirements.txt
 pip freeze > requirements.lock.txt
 ```
 
+> 仓库里已经带了一份 `requirements.lock.txt`（57 个包，含全部间接依赖）。
+> 想要和使用者**完全一致**的环境，可以改用它：`pip install -r requirements.lock.txt`
+
 ### 2. 配密钥
 
 ```bash
