@@ -23,7 +23,7 @@ def extract_receipt(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
 
     返回：
     {
-        "amount": 25.0 或 None,
+        "amount": 25.0 或 None,          # 单位：元（和 parse_record 保持一致，不是分）
         "direction": "expense",
         "category": "餐饮",
         "merchant": "沙县小吃",

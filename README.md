@@ -17,6 +17,7 @@ accounting-assistant/
 ├── app/                     应用代码
 │   ├── config.py            配置（从 .env 读）
 │   ├── constants.py         10 个分类、告警阈值
+│   ├── money.py             金额换算（元 ↔ 分）
 │   ├── api.py               REST 接口（可选加分项）
 │   ├── db/                  建表 SQL、数据库连接
 │   ├── services/            账单存取、统计、预算判断

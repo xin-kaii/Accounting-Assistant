@@ -19,7 +19,7 @@ def set_budget(month: str, amount: float, category: str = "") -> None:
 
     month    : 'YYYY-MM'
     category : '' 表示总预算，其它值为分类预算
-    amount   : >= 0
+    amount   : >= 0，**单位：元**（入库时用 money.to_cents() 转成分）
 
     注意：schema 里 category 用 '' 而不是 NULL，因为 SQLite 里 NULL != NULL，
           UNIQUE 约束拦不住重复插入。
@@ -53,6 +53,9 @@ def check_budget(month: str) -> list[dict]:
             "level": "over",         # ok / warn / over
         },
     ]
+
+    ⚠️ ratio 必须用「分」算：ratio = spent_cents / budget_cents，
+       不要用转成元之后的浮点数算，否则"刚好 100%"会判错。
 
     level 判定（阈值在 constants.py）：
         ratio < 0.70            -> "ok"    绿灯

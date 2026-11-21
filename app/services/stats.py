@@ -32,6 +32,8 @@ def get_stats(
     - 只统计 direction='expense'，收入不算进"消费"
     - ratio 是占比 0~1，保留 2 位小数
     - 没有数据时返回 total=0、空列表，不要抛异常（D 的页面会崩）
+    - **金额字段返回的单位都是「元」**（total / avg / amount / max_single.amount）
+      SQL 里在「分」上求和（整数，精确），最后统一 money.to_yuan() 转成元返回
 
     TODO(A) 第 7-8 天
     """

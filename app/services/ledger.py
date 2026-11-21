@@ -15,7 +15,8 @@ def add_transaction(record: dict) -> int:
 
     record 必填：
         occurred_at : 'YYYY-MM-DD HH:MM:SS'  钱是什么时候花的
-        amount      : float > 0               金额（正数）
+        amount      : float > 0               金额，**单位：元**（如 25.5）
+                                              入库时用 money.to_cents() 转成分存储
         direction   : 'expense' | 'income'
 
     record 选填（缺了用默认值）：

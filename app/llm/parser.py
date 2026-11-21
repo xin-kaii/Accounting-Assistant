@@ -14,7 +14,7 @@ def parse_record(text: str) -> dict:
 
     返回（任何情况下都返回这个结构，字段一个不少）：
     {
-        "amount": 25.0 或 None,
+        "amount": 25.0 或 None,          # 单位：元（如"午饭 25"就是 25.0，不是 2500）
         "direction": "expense",
         "category": "餐饮",
         "subcategory": None,

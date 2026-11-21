@@ -11,7 +11,11 @@ CREATE TABLE IF NOT EXISTS transactions (
     -- 钱是什么时候花的（不是什么时候存进来的！用户可能今天补记昨天的账）
     occurred_at TEXT    NOT NULL,
 
-    amount      REAL    NOT NULL CHECK (amount > 0),   -- 正数，方向看 direction
+    -- 金额单位是【分】：25.00 元存成 2500。
+    -- 为什么不用 REAL 直接存元：浮点累加会出现 0.1+0.2=0.30000000000000004，
+    -- 统计 120 笔后可能算出 799.9999999，把"刚好花完 800 元"判成"没超支"。
+    -- 换算只走 app/money.py 的 to_cents() / to_yuan()。
+    amount      INTEGER NOT NULL CHECK (amount > 0),
     direction   TEXT    NOT NULL CHECK (direction IN ('expense', 'income')),
     category    TEXT    NOT NULL,
     subcategory TEXT,
@@ -44,7 +48,7 @@ CREATE TABLE IF NOT EXISTS budgets (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     month      TEXT    NOT NULL,                        -- 'YYYY-MM'
     category   TEXT    NOT NULL DEFAULT '',             -- '' = 总预算
-    amount     REAL    NOT NULL CHECK (amount >= 0),
+    amount     INTEGER NOT NULL CHECK (amount >= 0),    -- 单位也是【分】，和账单表保持一致
     created_at TEXT    NOT NULL,
     UNIQUE (month, category)                            -- 同一个月同一类别只能有一条
 );
