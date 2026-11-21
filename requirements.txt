@@ -1,0 +1,34 @@
+# 依赖清单（版本已锁定：2026-11-21 实测可装组合）
+#
+# 安装：
+#   python -m venv .venv
+#   .venv\Scripts\activate
+#   pip install -r requirements.txt
+#
+# 若装完后想留一条完整快照（含所有间接依赖）：
+#   pip freeze > requirements.lock.txt
+
+# ---------- 界面 ----------
+streamlit==1.67.0
+
+# ⚠️ altair 必须 <6。
+#    altair 6.x 会引入 narwhals 依赖，pip 解析时要拉一个几百个版本的巨大索引页，
+#    在国内镜像上会长时间无响应（我们实际踩过这个坑）。
+#    streamlit 自己的要求是 altair>=5.0,<7，所以 5.x 完全合规。
+altair>=5.0,<6
+
+plotly==7.1.0
+
+# ---------- 数据 ----------
+pandas==3.1.1
+
+# ---------- 大模型 ----------
+openai==3.57.0
+python-dotenv==1.2.4
+
+# ---------- 接口（可选加分项，第 9-10 天才用）----------
+fastapi==0.165.0
+uvicorn[standard]==0.54.0
+
+# ---------- 测试 ----------
+pytest==9.2.0

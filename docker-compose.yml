@@ -1,0 +1,15 @@
+# A 负责。第 11 天让评审能一行命令起来。
+# 用法：docker compose up -d --build
+services:
+  app:
+    build: .
+    image: booking-ai:latest
+    container_name: booking-ai
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      # 数据持久化：容器删了，账单还在宿主机 data/ 里
+      - ./data:/app/data
+    restart: unless-stopped

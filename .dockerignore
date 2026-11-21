@@ -1,0 +1,15 @@
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.env
+.env.local
+docs
+samples/receipts/*.jpg
+samples/receipts/*.png
+data/*.db
+*.log
+.DS_Store

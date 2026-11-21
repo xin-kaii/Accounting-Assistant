@@ -1,0 +1,40 @@
+# ===== Python =====
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ===== 密钥（最重要，绝对不能提交）=====
+.env
+.env.local
+*.key
+secrets.toml
+
+# ===== 数据库与数据文件 =====
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+*.db-journal
+
+# ===== 编辑器 =====
+.idea/
+.vscode/
+*.swp
+
+# ===== 临时目录 =====
+.tmp/
+
+# ===== 系统垃圾 =====
+.DS_Store
+Thumbs.db
+
+# ===== 日志 =====
+*.log
+
+# ===== 模型/数据缓存 =====
+.cache/
+*.pkl
