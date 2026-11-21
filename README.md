@@ -26,7 +26,7 @@ accounting-assistant/
 │       └── main.py          Streamlit 入口
 ├── scripts/                 工具脚本（生成示例数据）
 ├── tests/                   单元测试
-├── docs/                    分工排期、参考项目、数据契约、问题记录
+├── docs/                    分工排期、参考项目、问题记录
 ├── data/                    运行时数据库（不提交）
 ├── assets/                  截图、架构图（README 里要显示）
 ├── samples/receipts/        测试用的小票图片
@@ -139,7 +139,7 @@ docker run -p 8501:8501 --env-file .env -v "%cd%/data:/app/data" booking-ai
 
 ## 五、当前进度
 
-- [ ] 第 1-2 天：环境验证 + 数据契约定稿
+- [ ] 第 1-2 天：环境验证 + 四个人核对接口
 - [ ] 第 3-6 天：打通「输入一句话 → 确认 → 入库 → 列表可见」
 - [ ] 第 7-10 天：图片识别、统计、查账、预算
 - [ ] 第 11-13 天：Docker、测试、文档
