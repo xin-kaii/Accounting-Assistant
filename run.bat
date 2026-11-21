@@ -30,10 +30,19 @@ copy ".env.example" ".env" >nul
 echo.
 
 :run
-echo 正在启动，浏览器会自动打开 http://localhost:8501
-echo 停止服务请按 Ctrl+C
+echo 地址： http://localhost:8501
+echo 停止： 在这个窗口按 Ctrl+C
 echo.
-".venv\Scripts\python.exe" -m streamlit run app\ui\main.py
+echo 正在启动，约 5 秒后会自动打开浏览器...
+echo 如果没打开，把上面那个地址复制到浏览器里就行。
+echo.
+
+rem 后台延迟 6 秒再开浏览器：不依赖 Streamlit 自己弹窗口，
+rem 避免浏览器权限冲突（比如 Edge 提示"现有实例以提升的权限运行"）。
+start "" /min cmd /c "timeout /t 6 /nobreak >nul & start http://localhost:8501"
+
+".venv\Scripts\python.exe" -m streamlit run app\ui\main.py --server.headless=true
+
 echo.
 echo 服务已停止。
 pause
