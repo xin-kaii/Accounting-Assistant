@@ -6,8 +6,16 @@
 
 from __future__ import annotations
 
-from app.constants import DEFAULT_CATEGORY, DIRECTION_EXPENSE, DIRECTIONS
-from app.db.conn import now_str, tx
+from datetime import datetime
+
+from app.constants import (
+    DEFAULT_CATEGORY,
+    DIRECTIONS,
+    SOURCE_MANUAL,
+    SOURCES,
+)
+from app.db.conn import DATETIME_FMT, now_str, tx
+from app.money import to_cents, to_yuan
 
 
 def add_transaction(record: dict) -> int:
@@ -37,7 +45,58 @@ def add_transaction(record: dict) -> int:
 
     TODO(A) 第 3-4 天
     """
-    raise NotImplementedError("TODO(A) 第 3-4 天：校验 + 入库")
+    # ---------- 1. 必填三项：时间 / 金额 / 方向 ----------
+    occurred_at = (record.get("occurred_at") or "").strip()
+    try:
+        datetime.strptime(occurred_at, DATETIME_FMT)
+    except ValueError:
+        raise ValueError(
+            f"occurred_at 必须是 'YYYY-MM-DD HH:MM:SS'，收到 {occurred_at!r}"
+        ) from None
+
+    amount = record.get("amount")
+    if amount is None:
+        raise ValueError("amount 不能为空")
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        raise ValueError(f"amount 必须是数字，收到 {record.get('amount')!r}") from None
+    if amount <= 0:
+        raise ValueError(f"amount 必须大于 0，收到 {amount}")
+
+    direction = record.get("direction")
+    if direction not in DIRECTIONS:
+        raise ValueError(f"direction 只能是 {DIRECTIONS}，收到 {direction!r}")
+
+    # ---------- 2. 来源：没传就兜默认，传错就报错 ----------
+    source = record.get("source") or SOURCE_MANUAL
+    if source not in SOURCES:
+        raise ValueError(f"source 只能是 {SOURCES}，收到 {source!r}")
+
+    # ---------- 3. 入库（金额转成分） ----------
+    with tx() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO transactions
+                (occurred_at, amount, direction, category, subcategory,
+                 merchant, note, source, raw_input, confidence, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                occurred_at,
+                to_cents(amount),
+                direction,
+                record.get("category") or DEFAULT_CATEGORY,
+                record.get("subcategory"),
+                record.get("merchant"),
+                record.get("note"),
+                source,
+                record.get("raw_input"),
+                record.get("confidence"),
+                now_str(),
+            ),
+        )
+        return int(cur.lastrowid)
 
 
 def list_transactions(
@@ -54,7 +113,35 @@ def list_transactions(
 
     TODO(A) 第 3-4 天
     """
-    raise NotImplementedError("TODO(A) 第 3-4 天")
+    sql = "SELECT * FROM transactions WHERE 1 = 1"
+    params: list[object] = []
+
+    # 闭区间：start 从当天 00:00:00 起，end 到当天 23:59:59 止
+    if start:
+        sql += " AND occurred_at >= ?"
+        params.append(f"{start} 00:00:00")
+    if end:
+        sql += " AND occurred_at <= ?"
+        params.append(f"{end} 23:59:59")
+    if category:
+        sql += " AND category = ?"
+        params.append(category)
+    if direction:
+        sql += " AND direction = ?"
+        params.append(direction)
+
+    sql += " ORDER BY occurred_at DESC, id DESC LIMIT ?"
+    params.append(int(limit))
+
+    with tx() as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["amount"] = to_yuan(item["amount"])   # 分 -> 元，界面直接用
+        result.append(item)
+    return result
 
 
 def get_transaction(tx_id: int) -> dict | None:
