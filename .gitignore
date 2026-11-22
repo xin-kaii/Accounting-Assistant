@@ -44,3 +44,9 @@ _*.py
 _*.txt
 _*.bat
 _*.log
+
+# ===== 真实小票照片：可能带姓名/地址，公开仓库不要收 =====
+# 合成测试图（sample_*.png）照常提交，评审要能复现
+samples/receipts/real_*.jpg
+samples/receipts/real_*.jpeg
+samples/receipts/real_*.png
