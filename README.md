@@ -91,6 +91,10 @@ pip install -r requirements.txt
 pip freeze > requirements.lock.txt
 ```
 
+> ?? **PowerShell ?? `>` ???? UTF-16 ??**?GitHub ?????????
+> ? cmd ????????? PowerShell ????
+> `pip freeze | Out-File -Encoding utf8 requirements.lock.txt`
+
 > 仓库里已经带了一份 `requirements.lock.txt`（57 个包，含全部间接依赖）。
 > 想要和使用者**完全一致**的环境，可以改用它：`pip install -r requirements.lock.txt`
 
@@ -144,7 +148,7 @@ docker run -p 8501:8501 --env-file .env -v "%cd%/data:/app/data" booking-ai
 ## 五、当前进度
 
 - [x] 第 1 天：环境搭建，`streamlit run app/ui/main.py` 能跑出 5 个页面骨架
-- [ ] 第 2 天：四个人一起核对接口（函数签名、返回结构、金额单位）
+- [ ] 第 2 天：三个人核对接口（各自截图贴群 + 走一条数据）
 - [ ] 第 3-6 天：打通「输入一句话 → 确认 → 入库 → 列表可见」
 - [ ] 第 7-10 天：图片识别、统计、查账、预算
 - [ ] 第 11-13 天：Docker、测试、文档
