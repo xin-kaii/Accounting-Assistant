@@ -21,11 +21,19 @@ def add_transaction(record: dict) -> int:
 
     record 选填（缺了用默认值）：
         category    : 默认 "其他"
-        subcategory / merchant / note / raw_input : 默认 None
-        source      : 默认 "manual"
+        subcategory / merchant / note : 默认 None
+        source      : 默认 "manual"（C 的页面应该显式传 text/receipt/manual）
+        raw_input   : 默认 None（C 的页面传用户原话或 OCR 原文）
         confidence  : 默认 None
 
-    raise ValueError: amount <= 0、direction 非法、occurred_at 格式不对
+    raise ValueError：下面四种情况都要抛，不要静默兜底
+        1. amount <= 0
+        2. direction 不是 expense / income
+        3. occurred_at 格式不对
+        4. source 传了非法值（比如 "abc"）—— 这一条最容易漏：
+           如果把它悄悄改成 "manual"，C 写错了也没人知道，
+           答辩统计「三种录入方式各占多少」时就分不出来了。
+           口径：默认值兜「没传」，报错兜「传错」。
 
     TODO(A) 第 3-4 天
     """
