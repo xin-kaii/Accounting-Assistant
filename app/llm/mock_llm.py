@@ -52,51 +52,7 @@ def parse_record(text: str) -> dict:
         4. 金额抓不到 -> amount=None，missing_fields 里加 "amount"
         5. confidence 按"金额和类别都抓到了 = 0.9，缺一个 = 0.5"给
     """
-        # ① 抓金额：先抓带单位的，抓不到再抓裸数字
-    m = AMOUNT_STRICT_RE.search(text)
-    if m is None:
-        m = AMOUNT_RE.search(text)
-    amount = float(m.group(1)) if m else None
-
-    # ② 定类别：扫关键词表
-    category = DEFAULT_CATEGORY
-    hit_keyword = False
-    for cat, words in CATEGORY_KEYWORDS.items():
-        if any(w in text for w in words):
-            category = cat
-            hit_keyword = True
-            break
-
-    # ③ 定时间：昨天/前天/今天
-    now = datetime.now()
-    if "前天" in text:
-        day = now - timedelta(days=2)
-    elif "昨天" in text:
-        day = now - timedelta(days=1)
-    else:
-        day = now
-
-    # ④ 缺金额就记下来
-    missing = []
-    if amount is None:
-        missing.append("amount")
-
-    # ⑤ 置信度
-    confidence = 0.9 if (amount is not None and hit_keyword) else 0.5
-
-    # 组装 9 个字段返回
-    return {
-        "amount": amount,
-        "direction": "expense",
-        "category": category,
-        "subcategory": None,
-        "merchant": None,
-        "note": None,
-        "occurred_at": day.strftime("%Y-%m-%d 00:00:00"),
-        "confidence": confidence,
-        "missing_fields": missing,
-    }
-
+    raise NotImplementedError("TODO(B) 第 3 天（这是第一个要写的东西）")
 
 
 def classify(text: str) -> tuple[str, float]:

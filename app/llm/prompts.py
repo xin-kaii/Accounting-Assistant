@@ -10,12 +10,8 @@
 """
 
 from __future__ import annotations
-from datetime import datetime, timedelta
-from app.constants import CATEGORIES
 
-# 日期基准：prompt 必须显式告诉模型"今天是几号"，否则它会拿例子里的日期当今天
-_TODAY = datetime.now()
-_YESTERDAY = _TODAY - timedelta(days=1)
+from app.constants import CATEGORIES
 
 # ============================================================
 # 1. 记账解析：一句话 -> 一笔账
@@ -39,21 +35,20 @@ SYSTEM_PARSE_RECORD = f"""你是一个中文记账助手。用户会说一句话
 }}
 
 【时间规则】
-- 今天的日期是 {_TODAY:%Y-%m-%d}，以这个为准（
 - 用户说"今天"或没提时间 → 用今天的日期
 - "昨天" → 今天减 1 天；"前天" → 今天减 2 天
-- 只给了月日没给年 → 用今年的日期，年份是当前年份
+- 只给了月日没给年 → 用今年的
 - 时间是"中午/晚上"这类模糊说法时，取用餐时段（12:00 / 19:00）
 
 【例子】
 用户：午饭 25，和同事 AA
-输出：{{"amount": 25, "direction": "expense", "category": "餐饮", "subcategory": null, "merchant": null, "note": "和同事 AA", "occurred_at": "{_TODAY:%Y-%m-%d} 12:00:00", "confidence": 0.93, "missing_fields": []}}
+输出：{{"amount": 25, "direction": "expense", "category": "餐饮", "subcategory": null, "merchant": null, "note": "和同事 AA", "occurred_at": "2026-11-20 12:00:00", "confidence": 0.93, "missing_fields": []}}
 
 用户：昨天打车 32
-输出：{{"amount": 32, "direction": "expense", "category": "交通", "subcategory": "打车", "merchant": null, "note": null, "occurred_at": "{_YESTERDAY:%Y-%m-%d} 00:00:00", "confidence": 0.9, "missing_fields": []}} 
+输出：{{"amount": 32, "direction": "expense", "category": "交通", "subcategory": "打车", "merchant": null, "note": null, "occurred_at": "2026-11-19 00:00:00", "confidence": 0.9, "missing_fields": []}}
 
 用户：星巴克花了三十多
-输出：{{"amount": null, "direction": "expense", "category": "餐饮", "subcategory": "咖啡", "merchant": "星巴克", "note": "花了三十多", "occurred_at": "{_TODAY:%Y-%m-%d} 00:00:00", "confidence": 0.4, "missing_fields": ["amount"]}}
+输出：{{"amount": null, "direction": "expense", "category": "餐饮", "subcategory": "咖啡", "merchant": "星巴克", "note": "花了三十多", "occurred_at": "2026-11-20 00:00:00", "confidence": 0.4, "missing_fields": ["amount"]}}
 
 【注意】
 - 金额没有明确数字时，宁可填 null 放进 missing_fields，也不要猜一个数
