@@ -1,4 +1,4 @@
-"""小票 / 支付截图识别（Owner: C｜第 5-6 天完成，第 3-4 天先把骨架立起来）
+﻿"""小票 / 支付截图识别（Owner: C｜第 5-6 天完成，第 3-4 天先把骨架立起来）
 
 思路：**不自己写 OCR**。直接把图片丢给视觉大模型，让它返回 JSON。
      不用 Tesseract、不用 OpenCV 预处理、不用训练。
@@ -30,7 +30,7 @@ from app.constants import (
 )
 from app.db.conn import DATETIME_FMT
 
-# 支持的图片格式，D 的上传控件要用它做校验
+# 支持的图片格式，C 的上传控件要用它做校验
 ALLOWED_TYPES = ("image/jpeg", "image/png", "image/webp")
 MAX_SIZE_MB = 5
 
