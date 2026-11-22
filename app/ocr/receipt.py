@@ -19,17 +19,24 @@ LOW_CONFIDENCE = 0.6
 
 
 def extract_receipt(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
-    """图片 -> 标准账单数据（字段和 B 的 parse_record 完全一致）。
+    """图片 -> 标准账单数据。
+
+    ⚠️ 结构和 B 的 parse_record **必须对齐这 9 个公共字段**
+    （否则 C 的记账页要给同一张确认卡片写两套逻辑）。C 额外多返回一个
+    raw_text，给用户看"识别到的原文"，页面可选用，不入库。
 
     返回：
     {
         "amount": 25.0 或 None,          # 单位：元（和 parse_record 保持一致，不是分）
         "direction": "expense",
         "category": "餐饮",
+        "subcategory": None,              # 小票上一般没有，填 None
         "merchant": "沙县小吃",
+        "note": None,                     # 小票上一般没有，填 None
         "occurred_at": "2026-11-20 12:30:00",
         "confidence": 0.85,
         "missing_fields": [],
+        # ↓ 以下是 OCR 独有，页面可选用，不入库
         "raw_text": "识别到的原始文字，给用户看个依据",
     }
 
