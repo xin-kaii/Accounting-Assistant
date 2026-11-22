@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-# 支持的图片格式，D 的上传控件要用它做校验
+# 支持的图片格式，C 的上传控件要用它做校验
 ALLOWED_TYPES = ("image/jpeg", "image/png", "image/webp")
 MAX_SIZE_MB = 5
 
@@ -50,7 +50,7 @@ def needs_manual_review(result: dict) -> bool:
     """要不要强制走人工确认。
 
     规则：confidence 低于 LOW_CONFIDENCE，或 missing_fields 非空 -> True
-    D 的页面据此决定"能不能直接入库"还是"必须先让用户改一遍"。
+    C 的页面据此决定"能不能直接入库"还是"必须先让用户改一遍"。
 
     TODO(C) 第 9-10 天
     """

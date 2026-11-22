@@ -47,7 +47,7 @@ def to_yuan(cents: int) -> float:
     25.0
 
     ⚠️ 一定要返回 float，不能返回 Decimal。
-    因为 `Decimal("1480.8") == 1480.8` 是 **False**，D 拿去和数字字面量比较会踩坑。
+    因为 `Decimal("1480.8") == 1480.8` 是 **False**，页面拿去和数字字面量比较会踩坑。
     内部先走 Decimal 保证精确到分，最后一步才转 float。
     """
     return float(Decimal(int(cents)) / Decimal(100))

@@ -1,7 +1,7 @@
-"""预算页（Owner: D｜第 9 天｜数据对接：A）
+"""预算页（Owner: A｜第 9 天｜数据对接：A）
 
 分工边界：
-    - 进度条、颜色、告警区 = D
+    - 进度条、颜色、告警区 = A
     - 预算存多少、花了多少、哪一档（ok/warn/over）= A（check_budget）
 """
 
@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import streamlit as st
 
-# 三档颜色，D 用 st.progress 或 plotly 时按这个上色
+# 三档颜色，A 用 st.progress 或 plotly 时按这个上色
 LEVEL_COLORS = {"ok": "green", "warn": "orange", "over": "red"}
 
 
 def render() -> None:
-    """渲染预算页。TODO(D) 第 9 天
+    """渲染预算页。TODO(A) 第 9 天
 
     要求：
     1. 设置区：月份 + 类别（含"总预算"）+ 金额 -> A 的 set_budget()
@@ -24,6 +24,6 @@ def render() -> None:
     """
     st.subheader("预算管理")
     st.info(
-        "TODO(D) 第 9 天：\n"
+        "TODO(A) 第 9 天：\n"
         "设置预算 -> A 的 set_budget() ；展示进度条 -> A 的 check_budget()"
     )

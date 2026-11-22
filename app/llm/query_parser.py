@@ -30,7 +30,7 @@ def parse_query(text: str) -> dict:
         "direction": "expense",
     }
 
-    raise ValueError：完全听不懂时抛这个，让 D 的对话页提示
+    raise ValueError：完全听不懂时抛这个，让 B 的对话页提示
                      "没听懂这个问题，试试『上个月吃饭花了多少』"
 
     TODO(B) 第 7-8 天

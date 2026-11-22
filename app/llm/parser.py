@@ -1,6 +1,6 @@
 """记账解析：一句话 -> 一笔账（Owner: B｜第 5-6 天完成）
 
-这是 B 对外最重要的一个函数，D 的记账页和 C 的确认页都调它。
+这是 B 对外最重要的一个函数，C 的记账页都调它。
 """
 
 from __future__ import annotations
@@ -22,14 +22,14 @@ def parse_record(text: str) -> dict:
         "note": "和同事 AA",
         "occurred_at": "2026-11-20 12:00:00",
         "confidence": 0.93,
-        "missing_fields": [],        # 非空时 D 的页面要显示追问
+        "missing_fields": [],        # 非空时 C 的页面要显示追问
     }
 
     两条路径，B 必须都实现：
     1. config.llm_ready() 为 True  -> 调 client.chat_json(prompts.SYSTEM_PARSE_RECORD, text)
     2. 否则或抛出 LLMError        -> 退回 mock_llm.parse_record(text)
 
-    ⚠️ 无论走哪条路，返回结构必须完全一样。D 的页面只认这一套字段。
+    ⚠️ 无论走哪条路，返回结构必须完全一样。页面只认这一套字段。
 
     TODO(B) 第 5-6 天
     """

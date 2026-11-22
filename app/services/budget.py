@@ -1,6 +1,6 @@
 """预算与超支判定（Owner: A｜第 9 天完成）
 
-对应考核 MVP 第 4 项。D 的预算页靠这里的数据画进度条和告警。
+对应考核 MVP 第 4 项。预算页靠这里的数据画进度条和告警。
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def delete_budget(month: str, category: str = "") -> bool:
 
 
 def check_budget(month: str) -> list[dict]:
-    """查某月预算的执行情况，D 的预算页直接用它渲染。
+    """查某月预算的执行情况，预算页直接用它渲染。
 
     返回（没有设预算时返回空列表）：
     [
@@ -71,7 +71,7 @@ def check_budget(month: str) -> list[dict]:
 
 
 def _judge_level(ratio: float) -> str:
-    """已实现：给 D 的示例用。你实现 check_budget 时可以直接调它。"""
+    """已实现：给页面的示例用。你实现 check_budget 时可以直接调它。"""
     if ratio > BUDGET_OVER_RATIO:
         return LEVEL_OVER
     if ratio >= BUDGET_WARN_RATIO:

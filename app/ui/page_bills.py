@@ -1,6 +1,6 @@
-"""账单列表页（Owner: D｜第 5-6 天）
+"""账单列表页（Owner: C｜第 5-6 天）
 
-直接调 A 的 list_transactions()，没有跨人依赖，D 可以自己一个人做完。
+直接调 A 的 list_transactions()，没有跨人依赖，C 可以自己一个人做完。
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import streamlit as st
 
 
 def render() -> None:
-    """渲染账单列表。TODO(D) 第 5-6 天
+    """渲染账单列表。TODO(C) 第 5-6 天
 
     要求：
     1. 筛选器：时间范围（本月/上月/自定义）、类别下拉、收支切换
@@ -19,6 +19,6 @@ def render() -> None:
     """
     st.subheader("账单列表")
     st.info(
-        "TODO(D) 第 5-6 天：\n"
+        "TODO(C) 第 5-6 天：\n"
         "筛选器（时间/类别/收支）-> A 的 list_transactions() -> 按天分组表格"
     )

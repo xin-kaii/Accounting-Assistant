@@ -1,4 +1,4 @@
-"""Streamlit 入口（Owner: D）
+"""Streamlit 入口（Owner: A）
 
 启动：streamlit run app/ui/main.py
 5 个页面在这里组装，每个页面的实现放在同目录的 page_*.py。
@@ -39,7 +39,7 @@ with st.sidebar:
     st.caption("状态：骨架阶段")
 
     st.divider()
-    st.caption("团队：A 数据 / B AI / C 图片 / D 界面")
+    st.caption("团队：A 数据+统计预算页 / B AI+对话页 / C 图片+记账账单页")
 
 # ---------- 5 个页面 ----------
 tab_record, tab_bills, tab_stats, tab_budget, tab_chat = st.tabs(
