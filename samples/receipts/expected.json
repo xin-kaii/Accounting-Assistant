@@ -1,0 +1,23 @@
+{
+  "sample_01_shaxian.png": {
+    "amount": 25.0,
+    "merchant": "沙县小吃",
+    "category": "餐饮",
+    "occurred_at": "2026-11-20 12:30:00"
+  },
+  "sample_02_starbucks.png": {
+    "amount": 36.0,
+    "merchant": "星巴克",
+    "category": "餐饮",
+    "occurred_at": "2026-11-19 15:10:00"
+  },
+  "sample_03_store.png": {
+    "amount": 12.5,
+    "merchant": "7-ELEVEN 便利店",
+    "category": "餐饮",
+    "occurred_at": "2026-11-18 08:05:00"
+  },
+  "not_a_receipt.png": {
+    "expect_error": true
+  }
+}
