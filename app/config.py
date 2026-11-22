@@ -38,12 +38,28 @@ VLM_MODEL = _env("VLM_MODEL", "qwen-vl-max")
 # true 时不调真模型，走 app/llm/mock_llm.py 的离线规则（没网/没额度也能演示）
 USE_MOCK_LLM = _env("USE_MOCK_LLM", "false").lower() in ("1", "true", "yes")
 
+# 占位符标记：.env.example 里写的是「你的key」，如果用户没改就复制成 .env，
+# 这些值必须被当成"未配置"，否则程序会拿着假 Key 去调接口，报 401 而不是降级。
+_PLACEHOLDER_MARKERS = ("你的", "填", "your", "xxx", "placeholder", "todo")
+
+
+def _is_placeholder(value: str) -> bool:
+    v = (value or "").strip().lower()
+    if not v:
+        return True
+    return any(m in v for m in _PLACEHOLDER_MARKERS)
+
+
+def _configured(value: str) -> bool:
+    """有值且不是占位符，才算真的配好了。"""
+    return bool(value) and not _is_placeholder(value)
+
 
 def llm_ready() -> bool:
-    """文本模型是否可用。未配 Key 时自动走离线模式。"""
-    return bool(LLM_API_KEY) and not USE_MOCK_LLM
+    """文本模型是否可用。未配 Key 或仍是占位符时自动走离线模式。"""
+    return _configured(LLM_API_KEY) and not USE_MOCK_LLM
 
 
 def vlm_ready() -> bool:
-    """视觉模型是否可用。未配 Key 时图片识别会返回明确错误，不会崩。"""
-    return bool(VLM_API_KEY)
+    """视觉模型是否可用。未配置时图片识别会返回明确错误，不会崩。"""
+    return _configured(VLM_API_KEY)

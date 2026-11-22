@@ -6,6 +6,21 @@
 3. 兜底：两次都失败就抛 LLMError，调用方决定退到 mock_llm
 
 用 openai 这个 SDK 调所有家（DeepSeek/千问/智谱都兼容），只改 base_url。
+
+⭐ 以下三条是 2026-11-22 用智谱 glm-4-flash 实测出来的，照着做能少踩两个坑：
+
+1. **必须传 `response_format={"type": "json_object"}`**
+   不传的话模型会返回「一段解释 + markdown 代码块里的 JSON」，
+   直接 `json.loads` 必炸。传了之后输出是纯 JSON。
+
+2. **prompt 里列分类枚举时不要用方括号**
+   写 `从[餐饮,交通,...]中选一个` 会让模型输出一个全是 null 的数组。
+   正确写法是把选项用空格隔开：「餐饮 交通 购物 娱乐 居住 医疗 教育 通讯 人情 其他」
+
+3. **模型会「猜」金额，必须显式禁止**
+   输入「星巴克花了三十多」，它会给 `amount: 30` 而不是 `null`。
+   prompt 里要写明「没有确切数字就填 null，不要猜」，
+   并且在代码里做后校验——否则库里会出现用户没确认过的假数字。
 """
 
 from __future__ import annotations
