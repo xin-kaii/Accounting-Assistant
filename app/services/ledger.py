@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from app.constants import (
     DEFAULT_CATEGORY,
@@ -18,26 +18,61 @@ from app.db.conn import DATETIME_FMT, now_str, tx
 from app.money import to_cents, to_yuan
 
 
+def _clean_text(value: object) -> str | None:
+    """去空格；空字符串存 NULL。
+
+    三列空值只允许一种写法：页面传 ""、模型传 None，最后库里都得是 NULL。
+    否则做 COUNT(merchant) 之类的统计会把一堆空串也算进去。
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_occurred_at(value: object) -> str:
+    """统一成 'YYYY-MM-DD HH:MM:SS'。
+
+    三个调用方给的格式不会天然一致，都在这里补全：
+        C 的 st.date_input -> date 对象 或 '2026-11-20'
+        B 的模型          -> '2026-11-20 12:30'，偶尔带 T 或斜杠
+        D 的表单          -> 'YYYY-MM-DD'
+    入库后格式统一，「字符串比较 = 时间比较」这条规矩才成立。
+    """
+    if isinstance(value, datetime):      # datetime 是 date 的子类，先判它
+        return value.strftime(DATETIME_FMT)
+    if isinstance(value, date):
+        return f"{value} 00:00:00"
+    text = str(value or "").strip().replace("/", "-").replace("T", " ")
+    if len(text) == 10:                  # 只给了日期 -> 补零点
+        text += " 00:00:00"
+    elif len(text) == 16:                # 少了秒
+        text += ":00"
+    return text
+
+
 def add_transaction(record: dict) -> int:
     """存一笔账，返回新的 id。
 
     record 必填：
         occurred_at : 'YYYY-MM-DD HH:MM:SS'  钱是什么时候花的
+                      也收 'YYYY-MM-DD'、'YYYY-MM-DD HH:MM'、date / datetime 对象，
+                      入库前统一补成全格式（页面只给日期时不会报错）
         amount      : float > 0               金额，**单位：元**（如 25.5）
                                               入库时用 money.to_cents() 转成分存储
         direction   : 'expense' | 'income'
 
     record 选填（缺了用默认值）：
-        category    : 默认 "其他"
-        subcategory / merchant / note : 默认 None
+        category    : 默认 "其他"（空白字符串也算没传）
+        subcategory / merchant / note : 默认 None（空白字符串一律存 NULL）
         source      : 默认 "manual"（C 的页面应该显式传 text/receipt/manual）
         raw_input   : 默认 None（C 的页面传用户原话或 OCR 原文）
-        confidence  : 默认 None
+        confidence  : 默认 None（非数字存 NULL，超出 0~1 夹到边界）
 
     raise ValueError：下面四种情况都要抛，不要静默兜底
         1. amount <= 0
         2. direction 不是 expense / income
-        3. occurred_at 格式不对
+        3. occurred_at 是空值、或真解析不出来（"昨天"这种）
         4. source 传了非法值（比如 "abc"）—— 这一条最容易漏：
            如果把它悄悄改成 "manual"，C 写错了也没人知道，
            答辩统计「三种录入方式各占多少」时就分不出来了。
@@ -46,12 +81,13 @@ def add_transaction(record: dict) -> int:
     TODO(A) 第 3-4 天
     """
     # ---------- 1. 必填三项：时间 / 金额 / 方向 ----------
-    occurred_at = (record.get("occurred_at") or "").strip()
+    raw_time = record.get("occurred_at")
+    occurred_at = _normalize_occurred_at(raw_time)
     try:
         datetime.strptime(occurred_at, DATETIME_FMT)
     except ValueError:
         raise ValueError(
-            f"occurred_at 必须是 'YYYY-MM-DD HH:MM:SS'，收到 {occurred_at!r}"
+            f"occurred_at 必须是 'YYYY-MM-DD HH:MM:SS'（只给日期也行），收到 {raw_time!r}"
         ) from None
 
     amount = record.get("amount")
@@ -73,7 +109,17 @@ def add_transaction(record: dict) -> int:
     if source not in SOURCES:
         raise ValueError(f"source 只能是 {SOURCES}，收到 {source!r}")
 
-    # ---------- 3. 入库（金额转成分） ----------
+    # ---------- 3. 置信度：模型偶尔返回 "高"，宁可存 NULL，也别让 REAL 列里躺字符串 ----------
+    confidence = record.get("confidence")
+    if confidence is not None:
+        try:
+            confidence = float(confidence)
+        except (TypeError, ValueError):
+            confidence = None
+        else:
+            confidence = min(1.0, max(0.0, confidence))
+
+    # ---------- 4. 入库（金额转成分） ----------
     with tx() as conn:
         cur = conn.execute(
             """
@@ -86,13 +132,13 @@ def add_transaction(record: dict) -> int:
                 occurred_at,
                 to_cents(amount),
                 direction,
-                record.get("category") or DEFAULT_CATEGORY,
-                record.get("subcategory"),
-                record.get("merchant"),
-                record.get("note"),
+                _clean_text(record.get("category")) or DEFAULT_CATEGORY,
+                _clean_text(record.get("subcategory")),
+                _clean_text(record.get("merchant")),
+                _clean_text(record.get("note")),
                 source,
-                record.get("raw_input"),
-                record.get("confidence"),
+                _clean_text(record.get("raw_input")),
+                confidence,
                 now_str(),
             ),
         )
@@ -109,6 +155,7 @@ def list_transactions(
     """按条件查账单，按 occurred_at 倒序（最新的在前）。
 
     start / end 都是 'YYYY-MM-DD'，闭区间（含当天）。
+    limit 会被夹到 1~1000（传 0 或负数不会是「不限」）。
     账单列表页、对话页都调它。
 
     TODO(A) 第 3-4 天
@@ -131,7 +178,8 @@ def list_transactions(
         params.append(direction)
 
     sql += " ORDER BY occurred_at DESC, id DESC LIMIT ?"
-    params.append(int(limit))
+    # SQLite 里 LIMIT -1 等于「不限」，页面传 0/负数时不能把全表拉出来
+    params.append(max(1, min(int(limit), 1000)))
 
     with tx() as conn:
         rows = conn.execute(sql, params).fetchall()
