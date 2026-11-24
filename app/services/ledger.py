@@ -51,6 +51,70 @@ def _normalize_occurred_at(value: object) -> str:
     return text
 
 
+def _parse_occurred_at(value: object) -> str:
+    """归一化 + 校验，返回能直接入库的 'YYYY-MM-DD HH:MM:SS'。"""
+    normalized = _normalize_occurred_at(value)
+    try:
+        datetime.strptime(normalized, DATETIME_FMT)
+    except ValueError:
+        raise ValueError(
+            f"occurred_at 必须是 'YYYY-MM-DD HH:MM:SS'（只给日期也行），收到 {value!r}"
+        ) from None
+    return normalized
+
+
+def _parse_amount(value: object) -> int:
+    """元 -> 分。None、非数字、<= 0 都抛 ValueError。"""
+    if value is None:
+        raise ValueError("amount 不能为空")
+    try:
+        yuan = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"amount 必须是数字，收到 {value!r}") from None
+    if yuan <= 0:
+        raise ValueError(f"amount 必须大于 0，收到 {yuan}")
+    return to_cents(yuan)
+
+
+def _parse_direction(value: object) -> str:
+    if value not in DIRECTIONS:
+        raise ValueError(f"direction 只能是 {DIRECTIONS}，收到 {value!r}")
+    return value
+
+
+def _parse_source(value: object) -> str:
+    """没传兜 manual，传错报错（默认值兜「没传」，报错兜「传错」）。"""
+    source = value or SOURCE_MANUAL
+    if source not in SOURCES:
+        raise ValueError(f"source 只能是 {SOURCES}，收到 {value!r}")
+    return source
+
+
+def _parse_confidence(value: object) -> float | None:
+    """非数字存 NULL；数字夹到 0~1。"""
+    if value is None:
+        return None
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        return None
+    return min(1.0, max(0.0, confidence))
+
+
+def _row_to_dict(row) -> dict:
+    """库里的行 -> 给页面用的 dict。
+
+    金额同时给两份：
+        amount       元（float），页面直接显示
+        amount_cents 分（int），页面做小计 / 合计时用它做整数累加，
+                     不会踩 "0.1 + 0.2 = 0.30000000000000004" 这种浮点误差
+    """
+    item = dict(row)
+    item["amount_cents"] = item["amount"]
+    item["amount"] = to_yuan(item["amount_cents"])
+    return item
+
+
 def add_transaction(record: dict) -> int:
     """存一笔账，返回新的 id。
 
@@ -81,43 +145,15 @@ def add_transaction(record: dict) -> int:
     TODO(A) 第 3-4 天
     """
     # ---------- 1. 必填三项：时间 / 金额 / 方向 ----------
-    raw_time = record.get("occurred_at")
-    occurred_at = _normalize_occurred_at(raw_time)
-    try:
-        datetime.strptime(occurred_at, DATETIME_FMT)
-    except ValueError:
-        raise ValueError(
-            f"occurred_at 必须是 'YYYY-MM-DD HH:MM:SS'（只给日期也行），收到 {raw_time!r}"
-        ) from None
-
-    amount = record.get("amount")
-    if amount is None:
-        raise ValueError("amount 不能为空")
-    try:
-        amount = float(amount)
-    except (TypeError, ValueError):
-        raise ValueError(f"amount 必须是数字，收到 {record.get('amount')!r}") from None
-    if amount <= 0:
-        raise ValueError(f"amount 必须大于 0，收到 {amount}")
-
-    direction = record.get("direction")
-    if direction not in DIRECTIONS:
-        raise ValueError(f"direction 只能是 {DIRECTIONS}，收到 {direction!r}")
+    occurred_at = _parse_occurred_at(record.get("occurred_at"))
+    amount_cents = _parse_amount(record.get("amount"))
+    direction = _parse_direction(record.get("direction"))
 
     # ---------- 2. 来源：没传就兜默认，传错就报错 ----------
-    source = record.get("source") or SOURCE_MANUAL
-    if source not in SOURCES:
-        raise ValueError(f"source 只能是 {SOURCES}，收到 {source!r}")
+    source = _parse_source(record.get("source"))
 
     # ---------- 3. 置信度：模型偶尔返回 "高"，宁可存 NULL，也别让 REAL 列里躺字符串 ----------
-    confidence = record.get("confidence")
-    if confidence is not None:
-        try:
-            confidence = float(confidence)
-        except (TypeError, ValueError):
-            confidence = None
-        else:
-            confidence = min(1.0, max(0.0, confidence))
+    confidence = _parse_confidence(record.get("confidence"))
 
     # ---------- 4. 入库（金额转成分） ----------
     with tx() as conn:
@@ -130,7 +166,7 @@ def add_transaction(record: dict) -> int:
             """,
             (
                 occurred_at,
-                to_cents(amount),
+                amount_cents,
                 direction,
                 _clean_text(record.get("category")) or DEFAULT_CATEGORY,
                 _clean_text(record.get("subcategory")),
@@ -155,7 +191,12 @@ def list_transactions(
     """按条件查账单，按 occurred_at 倒序（最新的在前）。
 
     start / end 都是 'YYYY-MM-DD'，闭区间（含当天）。
+    category / direction 传 None 或空串表示不筛；direction 会去空格并忽略大小写。
     limit 会被夹到 1~1000（传 0 或负数不会是「不限」）。
+
+    返回的每行 = 表里的全部列，其中：
+        amount       元（float），页面直接显示
+        amount_cents 分（int），页面做小计 / 合计时用它做整数累加
     账单列表页、对话页都调它。
 
     TODO(A) 第 3-4 天
@@ -170,10 +211,15 @@ def list_transactions(
     if end:
         sql += " AND occurred_at <= ?"
         params.append(f"{end} 23:59:59")
-    if category:
+    if category is not None and str(category).strip():
         sql += " AND category = ?"
-        params.append(category)
-    if direction:
+        params.append(str(category).strip())
+    if direction is not None and str(direction).strip():
+        # 筛选是「读」，宽容一点：' Income ' 也认。
+        # 不这么做的话，页面传个带空格的值就静默查出空列表，很难查。
+        direction = str(direction).strip().lower()
+        if direction not in DIRECTIONS:
+            raise ValueError(f"direction 只能是 {DIRECTIONS}，收到 {direction!r}")
         sql += " AND direction = ?"
         params.append(direction)
 
@@ -184,31 +230,86 @@ def list_transactions(
     with tx() as conn:
         rows = conn.execute(sql, params).fetchall()
 
-    result = []
-    for row in rows:
-        item = dict(row)
-        item["amount"] = to_yuan(item["amount"])   # 分 -> 元，界面直接用
-        result.append(item)
-    return result
+    return [_row_to_dict(row) for row in rows]
 
 
 def get_transaction(tx_id: int) -> dict | None:
-    """查单条，不存在返回 None。TODO(A) 第 5 天"""
-    raise NotImplementedError("TODO(A) 第 5 天")
+    """查单条，不存在返回 None。
+
+    返回结构和 list_transactions 的每行一样（amount 元 + amount_cents 分）。
+    D 的"编辑账单"弹窗用它把原值填进输入框。
+    """
+    with tx() as conn:
+        row = conn.execute("SELECT * FROM transactions WHERE id = ?", (tx_id,)).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+# update_transaction 允许改的列。白名单而不是黑名单：新加字段时默认不可改，安全。
+_UPDATABLE = (
+    "occurred_at",
+    "amount",
+    "direction",
+    "category",
+    "subcategory",
+    "merchant",
+    "note",
+    "source",
+    "raw_input",
+    "confidence",
+)
 
 
 def update_transaction(tx_id: int, **fields) -> bool:
     """改一条（用户在确认页改了金额/类别后调用）。返回是否改成功。
 
-    改过之后，B 会把 (raw_input, 错的, 对的) 写进 corrections 表。
-    TODO(A) 第 5 天
+    只认 _UPDATABLE 里的列，amount 仍然传「元」（和 add_transaction 一致），
+    内部转成分再写库。传别的字段（拼错的 amout、想改 id/created_at）直接
+    ValueError —— 悄悄忽略的话，页面以为改好了，其实没改，最难查。
+
+    一个字段都没传 -> 返回 False（用户点保存但没动任何东西）。
+    记录不存在 -> 返回 False（rowcount = 0）。
+
+    改过之后，B 会把 (raw_input, 错的, 对的) 写进 corrections 表（record_correction）。
     """
-    raise NotImplementedError("TODO(A) 第 5 天")
+    unknown = set(fields) - set(_UPDATABLE)
+    if unknown:
+        raise ValueError(f"update_transaction 不能改这些字段：{sorted(unknown)}")
+
+    assignments: list[str] = []
+    params: list[object] = []
+    for field, value in fields.items():
+        if field == "occurred_at":
+            params.append(_parse_occurred_at(value))
+        elif field == "amount":
+            params.append(_parse_amount(value))
+        elif field == "direction":
+            params.append(_parse_direction(value))
+        elif field == "source":
+            params.append(_parse_source(value))
+        elif field == "confidence":
+            params.append(_parse_confidence(value))
+        elif field == "category":
+            params.append(_clean_text(value) or DEFAULT_CATEGORY)
+        else:
+            params.append(_clean_text(value))
+        assignments.append(f"{field} = ?")   # field 来自白名单，不是用户拼进来的
+
+    if not assignments:
+        return False
+
+    with tx() as conn:
+        cur = conn.execute(
+            f"UPDATE transactions SET {', '.join(assignments)} WHERE id = ?",
+            (*params, tx_id),
+        )
+        return cur.rowcount > 0
 
 
 def delete_transaction(tx_id: int) -> bool:
-    """删一条。TODO(A) 第 5 天"""
-    raise NotImplementedError("TODO(A) 第 5 天")
+    """删一条。记录不存在返回 False。"""
+    with tx() as conn:
+        cur = conn.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
+        return cur.rowcount > 0
 
 
 def record_correction(raw_input: str, wrong: dict, correct: dict) -> None:
