@@ -1,16 +1,34 @@
-"""B 第 3 天验收：mock_llm.parse_record。
+"""B 第 3 天验收：mock_llm.parse_record（pytest 版）
 
-三层验收：
-1. 基础 10 句（任务板原验收线：至少 8/10，金额 + 类别都正确）
-2. 金额边界 24 句（P0-1 补强：日期/订单/优惠/多金额/数量，必须全过）
-3. 方向 16 句（P1：工资/收入/报销/退款，以及“退款失败，午饭25”这类反向用例，必须全过）
+三层验收，共 50 句：
+1. 基础 10 句：金额 + 类别都对（任务板原验收线 8/10，现在要求全过）
+2. 金额边界 24 句：日期/订单号/优惠券/多金额/数量的干扰，不能误抓
+3. 方向 16 句：工资/报销/退款等收入判断，以及「退款失败，午饭25」这类反向用例
 
-运行方式（在仓库根目录、venv 下）：
-    python -m tests.test_mock_parse
+运行（仓库根目录、venv 下）：
+    python -m pytest tests/test_mock_parse.py -v
+
+函数名统一用 test_ 前缀，pytest 才会收集。
 """
+
+from __future__ import annotations
+
+import pytest
 
 from app.llm.mock_llm import parse_record
 
+# 返回结构必须齐全的 9 个字段（和 B 的 parse_record、C 的 extract_receipt 对齐）
+FIELDS = (
+    "amount",
+    "direction",
+    "category",
+    "subcategory",
+    "merchant",
+    "note",
+    "occurred_at",
+    "confidence",
+    "missing_fields",
+)
 
 BASIC_CASES = [
     ("午饭25", 25.0, "餐饮", "最基础：金额+餐饮"),
@@ -72,82 +90,40 @@ DIRECTION_CASES = [
 ]
 
 
-def run_basic() -> int:
-    passed = 0
-    print(f"{'输入':<18}{'金额':<10}{'类别':<8}{'判定':<6}说明")
-    print("-" * 76)
-    for text, expected_amount, expected_category, note in BASIC_CASES:
-        record = parse_record(text)
-        ok = record["amount"] == expected_amount and record["category"] == expected_category
-        passed += int(ok)
-        print(
-            f"{text:<18}{str(record['amount']):<10}{record['category']:<8}"
-            f"{'PASS' if ok else 'FAIL':<6}{note}"
-        )
-        if not ok:
-            print(
-                f"    期望 amount={expected_amount}, category={expected_category}；"
-                f"实际 amount={record['amount']}, category={record['category']}"
-            )
-    print(f"基础 10 句：{passed}/10（验收线 8/10）")
-    return passed
+@pytest.mark.parametrize("text,expected_amount,expected_category,note", BASIC_CASES)
+def test_basic(text, expected_amount, expected_category, note):
+    record = parse_record(text)
+    assert record["amount"] == expected_amount, f"{note}：期望 {expected_amount}，实际 {record['amount']}"
+    assert record["category"] == expected_category, (
+        f"{note}：期望 {expected_category}，实际 {record['category']}"
+    )
 
 
-def run_amount_edges() -> int:
-    passed = 0
-    print(f"\n{'输入':<22}{'金额':<10}{'判定':<6}说明")
-    print("-" * 76)
-    for text, expected_amount, note in AMOUNT_CASES:
-        record = parse_record(text)
-        ok = record["amount"] == expected_amount
-        passed += int(ok)
-        print(
-            f"{text:<22}{str(record['amount']):<10}"
-            f"{'PASS' if ok else 'FAIL':<6}{note}"
-        )
-        if not ok:
-            print(f"    期望 amount={expected_amount}；实际 amount={record['amount']}")
-    print(f"金额边界 {len(AMOUNT_CASES)} 句：{passed}/{len(AMOUNT_CASES)}（必须全过）")
-    return passed
+@pytest.mark.parametrize("text,expected_amount,note", AMOUNT_CASES)
+def test_amount_edge(text, expected_amount, note):
+    record = parse_record(text)
+    assert record["amount"] == expected_amount, f"{note}：期望 {expected_amount}，实际 {record['amount']}"
 
 
-def run_direction_cases() -> int:
-    passed = 0
-    print(f"\n{'输入':<24}{'金额':<10}{'方向':<8}{'判定':<6}说明")
-    print("-" * 76)
-    for text, expected_amount, expected_direction, note in DIRECTION_CASES:
-        record = parse_record(text)
-        ok = record["amount"] == expected_amount and record["direction"] == expected_direction
-        passed += int(ok)
-        print(
-            f"{text:<24}{str(record['amount']):<10}{record['direction']:<8}"
-            f"{'PASS' if ok else 'FAIL':<6}{note}"
-        )
-        if not ok:
-            print(
-                f"    期望 amount={expected_amount}, direction={expected_direction}；"
-                f"实际 amount={record['amount']}, direction={record['direction']}"
-            )
-    print(f"方向 {len(DIRECTION_CASES)} 句：{passed}/{len(DIRECTION_CASES)}（必须全过）")
-    return passed
+@pytest.mark.parametrize("text,expected_amount,expected_direction,note", DIRECTION_CASES)
+def test_direction(text, expected_amount, expected_direction, note):
+    record = parse_record(text)
+    assert record["amount"] == expected_amount, f"{note}：期望 {expected_amount}，实际 {record['amount']}"
+    assert record["direction"] == expected_direction, (
+        f"{note}：期望 {expected_direction}，实际 {record['direction']}"
+    )
 
 
-def main() -> None:
-    basic_passed = run_basic()
-    edges_passed = run_amount_edges()
-    direction_passed = run_direction_cases()
-    print("-" * 76)
-    if basic_passed < 8:
-        print("基础验收未达标")
-        raise SystemExit(1)
-    if edges_passed < len(AMOUNT_CASES):
-        print("金额边界未全过")
-        raise SystemExit(1)
-    if direction_passed < len(DIRECTION_CASES):
-        print("方向用例未全过")
-        raise SystemExit(1)
-    print("全部通过")
+@pytest.mark.parametrize("text", ["午饭25", "发工资8000", "星巴克三十多"])
+def test_return_structure(text):
+    """不管走哪条路，9 个字段一个都不能少——页面只认这一套。"""
+    record = parse_record(text)
+    missing = [f for f in FIELDS if f not in record]
+    assert not missing, f"{text} 缺字段：{missing}"
 
 
-if __name__ == "__main__":
-    main()
+def test_missing_amount_recorded():
+    """金额抓不到时，必须写进 missing_fields，页面据此让用户补。"""
+    record = parse_record("星巴克三十多")
+    assert record["amount"] is None
+    assert "amount" in record["missing_fields"]
