@@ -61,9 +61,11 @@ except Exception:  # pragma: no cover
     _add_transaction_from_a = None
 
 try:  # C 的小票识别（第 5-6 天接通；没接通时页面只显示错误，不影响文字记账）
+    from app.ocr.receipt import LOW_CONFIDENCE as _OCR_LOW_CONFIDENCE
     from app.ocr.receipt import extract_receipt as _extract_receipt_from_c
 except Exception:  # pragma: no cover
     _extract_receipt_from_c = None
+    _OCR_LOW_CONFIDENCE = 0.6
 
 
 # ============================================================
@@ -274,6 +276,22 @@ def _save_record(record: dict) -> tuple[int | None, str]:
         return None, f"入库失败（{type(exc).__name__}: {exc}），这笔账只放在本次会话里。"
 
 
+def _needs_review(record: dict) -> bool:
+    """要不要强制人工逐项核对。
+
+    两条判据（和 app/ocr/receipt.needs_manual_review 保持一致的口径）：
+    1. 置信度低于阈值（模型自己说没把握）
+    2. missing_fields 非空（少了字段，等于没认全）
+
+    为什么页面自己再判一次、不直接调 needs_manual_review：
+    文字记账那条路没有 OCR 模块也能用，不能因为一个可选依赖把页面搞挂。
+    """
+    if record.get("missing_fields"):
+        return True
+    confidence = record.get("confidence")
+    return isinstance(confidence, (int, float)) and confidence < _OCR_LOW_CONFIDENCE
+
+
 def _record_from_ocr(result: dict) -> dict:
     """把 extract_receipt 的结果变成页面草稿。
 
@@ -300,7 +318,7 @@ def _record_from_ocr(result: dict) -> dict:
 # 卡片的控件 key：rec_<draft_id>_<字段名>。
 # 用 draft_id 区分"这一次解析"，换一句话就要换一套 key，否则控件还留着上次的值。
 _CARD_FIELDS = ("amount", "direction", "category", "date", "time",
-                "merchant", "note", "sub", "save", "cancel")
+                "merchant", "note", "sub", "save", "cancel", "ack")
 
 _EXAMPLES = (
     "午饭 25，和同事 AA",
@@ -453,10 +471,23 @@ def render_confirm_card(record: dict) -> dict | None:
         if amount <= 0:
             st.caption("金额还空着，填上才能记；不想记了就点「取消」。")
 
+        # AI 没把握时，不能让人闭着眼点确认（第 8 天的验收项）。
+        # 判据两条：置信度低于阈值，或者 missing_fields 非空。
+        needs_review = _needs_review(record)
+        acknowledged = True
+        if needs_review:
+            confidence = record.get("confidence")
+            shown = f"{confidence:.0%}" if isinstance(confidence, (int, float)) else "未知"
+            st.error(f"AI 对这次识别没把握（置信度 {shown}），必须逐项核对后才能记账。")
+            acknowledged = st.checkbox(
+                "我已逐项核对金额、类别、时间、商户", key=key("ack")
+            )
+
         btn_save_col, btn_cancel_col, _ = st.columns([1, 1, 3])
         save = btn_save_col.button(
             "✅ 确认记账", type="primary", width="stretch",
-            disabled=amount <= 0, key=key("save"),
+            disabled=(amount <= 0) or (needs_review and not acknowledged),
+            key=key("save"),
         )
         cancel = btn_cancel_col.button("取消", width="stretch", key=key("cancel"))
 
