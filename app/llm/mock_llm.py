@@ -328,17 +328,88 @@ def classify(text: str) -> tuple[str, float]:
 
 
 def parse_query(text: str) -> dict:
-    """离线版查账解析。
+    """离线版查账解析（第 7-8 天）。
 
-    返回 {"metric": "sum"|"rank"|"count",
+    原则：日期由代码精确算，不靠模型；认不出的问法明确报错，不瞎编。
+
+    返回 {"metric": "sum"|"rank"|"count"|"compare",
           "time_start": "YYYY-MM-DD", "time_end": "YYYY-MM-DD",
-          "category": "餐饮"|None, "direction": "expense"}
+          "category": "餐饮"|None, "direction": "expense"|"income"}
 
-    TODO(B) 第 7-8 天。实现提示：
-        1. "上月/上个月" -> 上个月 1 号到月底；"本月/这个月" -> 本月
-        2. "最近30天" -> today-30 到 today
-        3. 类别用 CATEGORY_KEYWORDS 扫
-        4. "哪类/最多/排行" -> metric="rank"；"多少/花了多少" -> "sum"
-        5. 认不出来就抛 ValueError，让页面提示"没听懂，换个说法"
+    - metric 判断按顺序特判（"哪类花得最多"里有"花"，所以 rank 必须在 sum 前）：
+      compare（比/对比/比较/多花了/少花了）> rank（哪类/最多/排行）> count（几笔/笔数）> sum（多少/花了）
+      一个都不沾 -> ValueError，页面提示"没听懂"
+    - 时间：上月、本月/这个月（默认）、今年、本周、上周、最近N天、今天、昨天
+      月末用"下月 1 号减 1 天"算，保证 10 月是 31 天
+    - compare 的区间：含"上月/上个月"从上月 1 号到今天，否则本月 1 号到今天
+      （覆盖对比的两个月，answer_query 再按月切）
+    - 类别：CATEGORY_KEYWORDS 扫，多类命中取第一个（"吃饭和打车"只认"餐饮"）
+    - 方向：INCOME_KEYWORDS 扫全句，命中 income，否则 expense
+
+    已知边界：只说类别词不带问法（如"吃饭"）会抛 ValueError；
+    绝对日期（"11月20号花了多少"）不支持，按默认本月。
     """
-    raise NotImplementedError("TODO(B) 第 7-8 天")
+    now = datetime.now()
+    today = now.date()
+
+    # ① metric：compare > rank > count > sum，顺序不能乱
+    if any(w in text for w in ("比", "对比", "比较", "多花了", "少花了", "多还是少")):
+        metric = "compare"
+    elif any(w in text for w in ("哪类", "哪一类", "最多", "排行", "大头", "占比", "top")):
+        metric = "rank"
+    elif any(w in text for w in ("几笔", "多少笔", "笔数", "几次", "记了")):
+        metric = "count"
+    elif any(w in text for w in ("多少", "花了", "支出", "消费", "用了", "买了")):
+        metric = "sum"
+    else:
+        raise ValueError("没听懂这个问题，试试『上个月吃饭花了多少』")
+
+    # ② 时间区间：代码精确算（月末用"下月 1 号减 1 天"，不会少一天）
+    if "上个月" in text or "上月" in text:
+        first_this = today.replace(day=1)
+        last_prev = first_this - timedelta(days=1)
+        if metric == "compare":
+            start, end = last_prev.replace(day=1), today
+        else:
+            start, end = last_prev.replace(day=1), last_prev
+    elif "今年" in text:
+        start, end = today.replace(month=1, day=1), today
+    elif "本周" in text or "这周" in text:
+        start = today - timedelta(days=today.weekday())
+        end = today
+    elif "上周" in text:
+        this_monday = today - timedelta(days=today.weekday())
+        start = this_monday - timedelta(days=7)
+        end = this_monday - timedelta(days=1)
+    elif (m := re.search(r"最近\s*(\d+)\s*天|近\s*(\d+)\s*天", text)) is not None:
+        n = int(m.group(1) or m.group(2))
+        start = today - timedelta(days=n)
+        end = today
+    elif "今天" in text:
+        start = end = today
+    elif "昨天" in text:
+        start = end = today - timedelta(days=1)
+    else:
+        # 没提时间：默认本月（1 号到今天）
+        start, end = today.replace(day=1), today
+
+    # ③ 类别：扫关键词表，多类命中取第一个（与 parse_record 同一张表）
+    category = None
+    for cat, words in CATEGORY_KEYWORDS.items():
+        if any(w in text for w in words):
+            category = cat
+            break
+
+    # ④ 方向：收入词命中 income，否则 expense（查账默认问"花了多少"）
+    direction = (
+        DIRECTION_INCOME if any(w in text for w in INCOME_KEYWORDS)
+        else DIRECTION_EXPENSE
+    )
+
+    return {
+        "metric": metric,
+        "time_start": start.strftime("%Y-%m-%d"),
+        "time_end": end.strftime("%Y-%m-%d"),
+        "category": category,
+        "direction": direction,
+    }

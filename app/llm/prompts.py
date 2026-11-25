@@ -16,6 +16,10 @@ from app.constants import CATEGORIES
 # 日期基准：prompt 必须显式告诉模型"今天是几号"，否则它会拿例子里的日期当今天
 _TODAY = datetime.now()
 _YESTERDAY = _TODAY - timedelta(days=1)
+# 查账 prompt 用：上月/本月边界（例子日期必须动态，写死会把模型带偏——P0-2 同款问题）
+_FIRST_THIS_MONTH = _TODAY.replace(day=1)
+_LAST_PREV_MONTH = _FIRST_THIS_MONTH - timedelta(days=1)
+_FIRST_PREV_MONTH = _LAST_PREV_MONTH.replace(day=1)
 
 # ============================================================
 # 1. 记账解析：一句话 -> 一笔账
@@ -82,7 +86,7 @@ SYSTEM_PARSE_QUERY = f"""你是一个查账意图解析器。用户会问一句�
 - 问笔数 → "count"      例："这周记了几笔"
 - 问对比 → "compare"    例："这个月比上个月多花了吗"
 
-【时间怎么算】用今天日期 {__import__("datetime").datetime.now():%Y-%m-%d} 作为基准：
+【时间怎么算】用今天日期 {_TODAY:%Y-%m-%d} 作为基准：
 - "这个月" → 本月 1 号 到 今天
 - "上个月" → 上月 1 号 到 上月最后一天
 - "今年" → 今年 1 月 1 号 到 今天
@@ -94,10 +98,10 @@ SYSTEM_PARSE_QUERY = f"""你是一个查账意图解析器。用户会问一句�
 
 【例子】
 用户：我上个月吃饭花了多少
-输出：{{"metric": "sum", "time_start": "2026-10-01", "time_end": "2026-10-31", "category": "餐饮", "direction": "expense"}}
+输出：{{"metric": "sum", "time_start": "{_FIRST_PREV_MONTH:%Y-%m-%d}", "time_end": "{_LAST_PREV_MONTH:%Y-%m-%d}", "category": "餐饮", "direction": "expense"}}
 
 用户：这个月哪类花得最多
-输出：{{"metric": "rank", "time_start": "2026-11-01", "time_end": "2026-11-20", "category": null, "direction": "expense"}}
+输出：{{"metric": "rank", "time_start": "{_FIRST_THIS_MONTH:%Y-%m-%d}", "time_end": "{_TODAY:%Y-%m-%d}", "category": null, "direction": "expense"}}
 """
 
 # ============================================================
