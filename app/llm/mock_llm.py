@@ -10,6 +10,7 @@
     "昨天打车 32"            -> 金额 32，类别 交通，时间昨天
     "11月20号充话费50"       -> 金额 50（11月/20号不是金额）
     "3元券后实付25元"        -> 金额 25（不拿券当实付）
+    "工资5000"               -> 金额 5000，方向收入
 
 已知做不到（mock 的边界，遇到就返回 None 或低置信度，让页面人工确认）：
 - 中文数字/模糊数：三十、两百、一万五
@@ -26,7 +27,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta
 
-from app.constants import DEFAULT_CATEGORY
+from app.constants import DEFAULT_CATEGORY, DIRECTION_EXPENSE, DIRECTION_INCOME
 
 # ---------- 关键词表（够演示就行，不用穷举）----------
 CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -78,10 +79,32 @@ NON_AMOUNT_RE = re.compile(
 # 金额选择：只有一个候选就用；多个候选只认明确指向“实际支付”的那个
 ACTUAL_CUES = (
     "实付", "付了", "付款", "支付", "花了", "花", "一共", "总共", "合计",
-    "消费", "充值", "充", "券后", "优惠后", "折后", "现价", "到手价", "买", "交", "缴",
+    "消费", "充值", "充", "退回", "券后", "优惠后", "折后", "现价", "到手价", "买", "交", "缴",
 )
 NEGATIVE_CUES = ("原价", "优惠", "券", "小费", "押金", "定金")
 NEGATIVE_EDGE_CUES = ("满", "减", "省")
+
+# 收入方向：词必须紧贴选中的金额，避免“退款失败，午饭25”被误判成收入
+INCOME_KEYWORDS: tuple[str, ...] = (
+    "工资", "薪水", "薪资", "收入", "进账", "报销", "退款", "退回",
+    "奖金", "年终奖", "加班费", "补贴", "补助", "利息", "分红", "稿费",
+    "兼职", "外快", "返现", "中奖", "压岁钱",
+    "收到红包", "收红包", "抢红包",
+)
+# 收入词紧贴金额的最大间隔（字符）
+DIRECTION_WINDOW = 4
+# 收入词后面出现这些词，说明不是在说一笔收入
+INCOME_NEGATION_AFTER: tuple[str, ...] = (
+    "失败", "未", "没", "没有", "不", "别", "流程", "说明", "明细",
+    "记录", "计划", "申请", "待", "预计", "应该", "吗", "?", "？",
+)
+INCOME_NEGATION_BEFORE: tuple[str, ...] = ("没", "未", "不", "没有", "别")
+# 这些支出词紧贴金额时，方向优先判支出（如“收到红包200，买咖啡25”）
+EXPENSE_NEAR_CUES: tuple[str, ...] = (
+    "发红包", "给红包", "送红包", "支出", "花了", "花", "付了", "付款",
+    "支付", "消费", "买", "交", "缴", "转给",
+)
+EXPENSE_WINDOW = 3
 
 
 def _mask_non_amounts(text: str) -> str:
@@ -99,9 +122,10 @@ def _mask_non_amounts(text: str) -> str:
     return masked
 
 
-def _extract_amount(text: str) -> float | None:
-    """从一句话里选一个金额；多个候选且没有“实付”等明确线索时返回 None。
+def _pick_amount(text: str) -> tuple[float | None, int, int]:
+    """从一句话里选一个金额；返回 (金额, 起始位置, 结束位置)。
 
+    多个候选且没有“实付”等明确线索时返回 (None, -1, -1)。
     mock 的原则：宁可不猜，也不把优惠券、原价、日期当成实际金额。
     """
     amount_text = _mask_non_amounts(text)
@@ -130,22 +154,101 @@ def _extract_amount(text: str) -> float | None:
             cue in after for cue in NEGATIVE_CUES
         ) or any(before.endswith(cue) for cue in NEGATIVE_EDGE_CUES)
         score = (3 if has_unit else 0) + (4 if actual else 0) - (2 if negative else 0)
-        candidates.append((value, score, actual, negative))
+        candidates.append((value, score, actual, negative, m.start(), m.end()))
 
     if not candidates:
-        return None
+        return None, -1, -1
     # 句子里只有优惠/原价/小费，没有任何“实付”类线索：宁可不猜
     if not any(c[2] for c in candidates) and any(c[3] for c in candidates):
-        return None
+        return None, -1, -1
 
     best_score = max(c[1] for c in candidates)
     best = [c for c in candidates if c[1] == best_score]
     if len(best) > 1 and len({c[0] for c in best}) > 1:
-        return None
+        return None, -1, -1
     chosen = best[0]
     if chosen[3] and not chosen[2]:
-        return None
-    return chosen[0]
+        return None, -1, -1
+    return chosen[0], chosen[4], chosen[5]
+
+
+def _extract_amount(text: str) -> float | None:
+    """兼容旧调用：只返回金额。"""
+    return _pick_amount(text)[0]
+
+
+def _span_gap(start_a: int, end_a: int, start_b: int, end_b: int) -> int:
+    """两个区间之间隔了几个字符；重叠返回 0。"""
+    if end_a <= start_b:
+        return start_b - end_a
+    if end_b <= start_a:
+        return start_a - end_b
+    return 0
+
+
+def _income_hit_is_valid(text: str, start: int, keyword: str) -> bool:
+    """收入词前后不能是否定/流程类说法，例如“退款失败”“没发工资”。"""
+    end = start + len(keyword)
+    before = text[max(0, start - 2):start]
+    after = text[end:end + 3]
+    return not any(w in before for w in INCOME_NEGATION_BEFORE) and not any(
+        w in after for w in INCOME_NEGATION_AFTER
+    )
+
+
+def _iter_income_hits(text: str):
+    """遍历所有有效的收入词位置。"""
+    for keyword in INCOME_KEYWORDS:
+        idx = text.find(keyword)
+        while idx != -1:
+            if _income_hit_is_valid(text, idx, keyword):
+                yield idx, idx + len(keyword)
+            idx = text.find(keyword, idx + 1)
+
+
+def _has_income_keyword(text: str) -> bool:
+    """整句里有没有有效的收入词（金额没选出来时的兜底）。"""
+    return next(_iter_income_hits(text), None) is not None
+
+
+def _has_income_near_amount(text: str, amount_start: int, amount_end: int) -> bool:
+    """收入词必须紧贴选中的金额，不能只看全句。"""
+    return any(
+        _span_gap(start, end, amount_start, amount_end) <= DIRECTION_WINDOW
+        for start, end in _iter_income_hits(text)
+    )
+
+
+def _has_expense_near_amount(text: str, amount_start: int, amount_end: int) -> bool:
+    """支出词紧贴金额时优先判支出，处理“收到红包200，买咖啡25”。"""
+    for cue in EXPENSE_NEAR_CUES:
+        idx = text.find(cue)
+        while idx != -1:
+            if _span_gap(idx, idx + len(cue), amount_start, amount_end) <= EXPENSE_WINDOW:
+                return True
+            idx = text.find(cue, idx + 1)
+    return False
+
+
+def _detect_direction(text: str, amount: float | None, amount_start: int, amount_end: int) -> tuple[str, bool]:
+    """判断收支方向；返回 (direction, 是否明确命中收入词)。
+
+    原则：方向跟着“选中的金额”走，不跟全句关键词走。
+    - 收入词必须紧贴选中的金额（±4 字），否则不认
+    - 支出词紧贴金额（±3 字）时优先判支出
+    - 没命中收入词就按默认支出
+    """
+    direction_text = _mask_non_amounts(text)
+    if amount is not None and amount_start >= 0:
+        income_near = _has_income_near_amount(direction_text, amount_start, amount_end)
+        expense_near = _has_expense_near_amount(direction_text, amount_start, amount_end)
+        if income_near and not expense_near:
+            return DIRECTION_INCOME, True
+        return DIRECTION_EXPENSE, False
+    # 金额没选出来（多笔/歧义）时，只能看全句有没有明确收入词
+    if _has_income_keyword(direction_text):
+        return DIRECTION_INCOME, True
+    return DIRECTION_EXPENSE, False
 
 
 def parse_record(text: str) -> dict:
@@ -155,14 +258,20 @@ def parse_record(text: str) -> dict:
         1. 先屏蔽日期、时间、订单/电话/房间号、楼层/线路/数量等非金额数字
         2. 从剩余候选里选“实际支付”：只有一个候选就用；多个候选优先“实付/花了/充值”等线索
         3. 多个候选且没有明确线索 -> amount=None，missing_fields 加 "amount"（交给页面人工确认）
+    方向：
+        工资/收入/报销/退款/奖金/利息/分红/稿费/兼职/外快/返现/中奖/补贴/加班费/压岁钱/收到红包
+        必须紧贴选中的金额才判 income；其余默认 expense；支出词紧贴金额时优先 expense
     类别：CATEGORY_KEYWORDS 扫关键词，没中就 DEFAULT_CATEGORY
     时间：昨天/前天/今天
-    置信度：金额和类别都抓到 = 0.9，否则 0.5
+    置信度：金额 +（类别或收入方向）命中 = 0.9，否则 0.5
     """
-    # ① 抓金额：先屏蔽非金额数字，再从候选里选实际支付
-    amount = _extract_amount(text)
+    # ① 抓金额：先屏蔽非金额数字，再从候选里选实际支付；同时保留位置供方向判断
+    amount, amount_start, amount_end = _pick_amount(text)
 
-    # ② 定类别：扫关键词表
+    # ② 定方向：收入词必须紧贴选中的金额，避免“退款失败，午饭25”被误判
+    direction, direction_hit = _detect_direction(text, amount, amount_start, amount_end)
+
+    # ③ 定类别：扫关键词表
     category = DEFAULT_CATEGORY
     hit_keyword = False
     for cat, words in CATEGORY_KEYWORDS.items():
@@ -171,7 +280,7 @@ def parse_record(text: str) -> dict:
             hit_keyword = True
             break
 
-    # ③ 定时间：昨天/前天/今天
+    # ④ 定时间：昨天/前天/今天
     now = datetime.now()
     if "前天" in text:
         day = now - timedelta(days=2)
@@ -180,18 +289,18 @@ def parse_record(text: str) -> dict:
     else:
         day = now
 
-    # ④ 缺金额就记下来
+    # ⑤ 缺金额就记下来
     missing = []
     if amount is None:
         missing.append("amount")
 
-    # ⑤ 置信度
-    confidence = 0.9 if (amount is not None and hit_keyword) else 0.5
+    # ⑥ 置信度：金额 +（类别或收入方向）命中
+    confidence = 0.9 if (amount is not None and (hit_keyword or direction_hit)) else 0.5
 
     # 组装 9 个字段返回
     return {
         "amount": amount,
-        "direction": "expense",
+        "direction": direction,
         "category": category,
         "subcategory": None,
         "merchant": None,

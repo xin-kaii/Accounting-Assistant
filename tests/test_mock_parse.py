@@ -1,8 +1,9 @@
 """B 第 3 天验收：mock_llm.parse_record。
 
-两层验收：
+三层验收：
 1. 基础 10 句（任务板原验收线：至少 8/10，金额 + 类别都正确）
 2. 金额边界 24 句（P0-1 补强：日期/订单/优惠/多金额/数量，必须全过）
+3. 方向 16 句（P1：工资/收入/报销/退款，以及“退款失败，午饭25”这类反向用例，必须全过）
 
 运行方式（在仓库根目录、venv 下）：
     python -m tests.test_mock_parse
@@ -51,6 +52,25 @@ AMOUNT_CASES = [
     ("星巴克三十多", None, "中文模糊金额不猜"),
 ]
 
+DIRECTION_CASES = [
+    ("工资5000", 5000.0, "income", "工资是收入"),
+    ("本月工资到账5000", 5000.0, "income", "工资到账"),
+    ("收入5000", 5000.0, "income", "收入"),
+    ("报销200", 200.0, "income", "报销"),
+    ("退款30", 30.0, "income", "退款"),
+    ("退回押金200", 200.0, "income", "退回押金是收入"),
+    ("奖金1000", 1000.0, "income", "奖金"),
+    ("利息20", 20.0, "income", "利息"),
+    ("收到红包200", 200.0, "income", "收到红包"),
+    ("发红包200", 200.0, "expense", "发红包是支出"),
+    ("午饭25", 25.0, "expense", "默认支出"),
+    ("退款失败，午饭25", 25.0, "expense", "退款失败不能当收入"),
+    ("工资条打印，午饭25", 25.0, "expense", "工资条不是一笔收入"),
+    ("报销流程说明，午饭25", 25.0, "expense", "报销流程不是一笔收入"),
+    ("收到红包200，买咖啡25", 25.0, "expense", "方向跟着选中的金额，不跟全句关键词"),
+    ("工资5000，买咖啡25", 25.0, "expense", "有工资也有支出，选中的是咖啡"),
+]
+
 
 def run_basic() -> int:
     passed = 0
@@ -91,15 +111,40 @@ def run_amount_edges() -> int:
     return passed
 
 
+def run_direction_cases() -> int:
+    passed = 0
+    print(f"\n{'输入':<24}{'金额':<10}{'方向':<8}{'判定':<6}说明")
+    print("-" * 76)
+    for text, expected_amount, expected_direction, note in DIRECTION_CASES:
+        record = parse_record(text)
+        ok = record["amount"] == expected_amount and record["direction"] == expected_direction
+        passed += int(ok)
+        print(
+            f"{text:<24}{str(record['amount']):<10}{record['direction']:<8}"
+            f"{'PASS' if ok else 'FAIL':<6}{note}"
+        )
+        if not ok:
+            print(
+                f"    期望 amount={expected_amount}, direction={expected_direction}；"
+                f"实际 amount={record['amount']}, direction={record['direction']}"
+            )
+    print(f"方向 {len(DIRECTION_CASES)} 句：{passed}/{len(DIRECTION_CASES)}（必须全过）")
+    return passed
+
+
 def main() -> None:
     basic_passed = run_basic()
     edges_passed = run_amount_edges()
+    direction_passed = run_direction_cases()
     print("-" * 76)
     if basic_passed < 8:
         print("基础验收未达标")
         raise SystemExit(1)
     if edges_passed < len(AMOUNT_CASES):
         print("金额边界未全过")
+        raise SystemExit(1)
+    if direction_passed < len(DIRECTION_CASES):
+        print("方向用例未全过")
         raise SystemExit(1)
     print("全部通过")
 
