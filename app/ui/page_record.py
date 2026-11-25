@@ -1,4 +1,4 @@
-﻿"""记账页（Owner: C｜第 3-4 天｜数据对接：B）
+"""记账页（Owner: C｜第 3-4 天｜数据对接：B）
 
 页面流程（这也是答辩会被问的那道题，要能讲清楚）：
     1. 用户在输入框打"午饭 25，和同事 AA"
@@ -282,6 +282,9 @@ def _record_from_ocr(result: dict) -> dict:
     """
     record = dict(result)
     record["source"] = SOURCE_RECEIPT
+    # ledger 的 raw_input 约定是"用户原话或 OCR 原文"。
+    # 不存的话，事后想查"当时图上到底写了什么"就只剩 raw_text 在页面里，刷新就没了。
+    record["raw_input"] = (str(result.get("raw_text") or "")[:1000] or None)
     confidence = result.get("confidence")
     if isinstance(confidence, (int, float)):
         record["_note"] = f"来源：小票识别（置信度 {confidence:.0%}）"
