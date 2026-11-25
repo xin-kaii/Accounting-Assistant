@@ -273,6 +273,12 @@ def _save_record(record: dict) -> tuple[int | None, str]:
     except NotImplementedError:
         return None, "A 的 add_transaction() 还没接通，这笔账只放在本次会话里，刷新就没了。"
     except Exception as exc:
+        message = str(exc)
+        if "no such table" in message:
+            return None, (
+                "数据库还没初始化：先在项目根目录跑 "
+                "`python -c \"from app.db.conn import init_db; init_db()\"`，再点一次确认。"
+            )
         return None, f"入库失败（{type(exc).__name__}: {exc}），这笔账只放在本次会话里。"
 
 
