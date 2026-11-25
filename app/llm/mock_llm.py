@@ -314,7 +314,17 @@ def parse_record(text: str) -> dict:
 
 def classify(text: str) -> tuple[str, float]:
     """离线版分类。返回 (类别, 置信度)。关键词命中越多置信度越高。"""
-    raise NotImplementedError("TODO(B) 第 3 天")
+    best_cat = DEFAULT_CATEGORY
+    best_hits = 0
+    for cat, words in CATEGORY_KEYWORDS.items():
+        hits = sum(1 for w in words if w in text)
+        if hits > best_hits:
+            best_hits = hits
+            best_cat = cat
+    if best_hits == 0:
+        return DEFAULT_CATEGORY, 0.3
+    confidence = 0.9 if best_hits >= 2 else 0.7
+    return best_cat, confidence
 
 
 def parse_query(text: str) -> dict:

@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from app import config
@@ -33,6 +34,22 @@ from app import config
 
 class LLMError(Exception):
     """模型调用失败（超时、没 Key、返回的不是 JSON）。"""
+
+
+def _extract_json_object(text: str) -> dict[str, Any]:
+    """把模型返回尽量解析成 JSON 对象；解析不出抛 ValueError。"""
+    cleaned = (text or "").strip()
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", cleaned)
+    if m:
+        cleaned = m.group(1).strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        cleaned = cleaned[start:end + 1]
+    data = json.loads(cleaned)
+    if not isinstance(data, dict):
+        raise ValueError("解析结果不是 JSON 对象")
+    return data
 
 
 def chat_json(
@@ -66,11 +83,57 @@ def chat_json(
            一条 user 消息再试一次
         4. 别在这里做业务判断，这里只负责"拿到一个 dict"
 
-    TODO(B) 第 3-4 天
+    实现见下方。
     """
     if not config.llm_ready():
         raise LLMError("未配置 LLM_API_KEY，或 USE_MOCK_LLM=true")
-    raise NotImplementedError("TODO(B) 第 3-4 天")
+
+    # 延迟导入：离线演示（mock）时即使没装 openai 也不会在 import 阶段崩
+    from openai import OpenAI
+
+    model = model or config.LLM_MODEL
+    openai_client = OpenAI(api_key=config.LLM_API_KEY, base_url=config.LLM_BASE_URL)
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+    use_response_format = True
+    last_raw = ""
+    last_err: Exception | None = None
+    for attempt in range(retry + 1):
+        # 重试时把上次的坏输出反馈给模型，让它重新只出 JSON
+        if attempt > 0:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "你上一次的输出无法解析成 JSON，请重新只输出一个合法的 JSON 对象，"
+                        "不要任何解释文字、不要 markdown 代码块。"
+                        f"上一次的输出是：{last_raw[:500]}"
+                    ),
+                }
+            )
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "timeout": timeout,
+        }
+        if use_response_format:
+            kwargs["response_format"] = {"type": "json_object"}
+        try:
+            resp = openai_client.chat.completions.create(**kwargs)
+            content = resp.choices[0].message.content or ""
+            last_raw = content
+            return _extract_json_object(content)
+        except Exception as exc:  # noqa: BLE001 —— 统一转 LLMError，让调用方决定是否降级
+            last_err = exc
+            err_text = str(exc).lower()
+            # 模型/网关不支持 response_format 时，去掉它再试，改用 prompt 约束 JSON
+            if use_response_format and ("response_format" in err_text or "json_object" in err_text):
+                use_response_format = False
+
+    raise LLMError(f"调用模型失败或返回非法 JSON：{last_err}") from last_err
 
 
 def chat_vision(
