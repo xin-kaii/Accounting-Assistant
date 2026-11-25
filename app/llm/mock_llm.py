@@ -5,13 +5,20 @@
 2. 对手 KuGua-Gu 已经做了（他们的 mock_llm.py），我们不做吃亏
 3. 写测试时不用花钱调模型
 
-设计原则：只覆盖"能演示"的最小场景，不追求效果。
+设计原则：覆盖"能演示 + 常见记账说法"，但不追求自然语言全对。
     "午饭 25"                -> 金额 25，类别 餐饮
     "昨天打车 32"            -> 金额 32，类别 交通，时间昨天
-    "上个月吃饭花了多少"      -> {时间段: 上月, 类别: 餐饮, 指标: 合计}
+    "11月20号充话费50"       -> 金额 50（11月/20号不是金额）
+    "3元券后实付25元"        -> 金额 25（不拿券当实付）
 
-已知做不到（也没必要做）：口语化的复杂句子、一条消息多笔。
-在这些情况返回 confidence 低 + missing_fields 非空，让页面走"人工确认"。
+已知做不到（mock 的边界，遇到就返回 None 或低置信度，让页面人工确认）：
+- 中文数字/模糊数：三十、两百、一万五
+- 元角分混合：25元5角、1块5
+- 单价×人数/份数写在后面：25元/人，2人；25元一份，买2份
+- 只给原价+折扣、不给实付：100元打8折
+- 一条消息多笔：午饭25，打车30
+- 万/千简写：3万5（当前只认 3万，不认后面的 5 千）
+- 绝对日期：11月20号 只用于屏蔽金额，occurred_at 仍按今天
 """
 
 from __future__ import annotations
@@ -36,34 +43,124 @@ CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
     "人情": ("红包", "份子", "礼物", "随礼"),
 }
 
-# 金额：25、25.5、25元、￥25、25块
-AMOUNT_RE = re.compile(r"(\d+(?:\.\d{1,2})?)\s*(?:元|块|rmb|￥|¥)?", re.IGNORECASE)
-# 明确带单位的金额优先（避免把"3号线"识别成 3 元）
-AMOUNT_STRICT_RE = re.compile(r"(?:￥|¥)?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)")
-
-# 日期/序号/数量等“不是金额”的数字：抓金额前先打码
-# 只用于金额提取，不要拿它改写原文，否则类别/时间/备注会被破坏
-NON_AMOUNT_RE = re.compile(
-    r"\d+(?:\.\d+)?\s*(?:号线|分钟|小时|公里|个月|月|日|号|楼|层|路|岁|点|个|杯|人|位|天|年|%)"
+# 金额候选：25、25.5、25元、￥25、25块、1,000、1.5万
+AMOUNT_CANDIDATE_RE = re.compile(
+    r"(?P<prefix>￥|¥)?\s*"
+    r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
+    r"\s*(?P<mult>万|千)?\s*(?P<unit>元|块|rmb)?",
+    re.IGNORECASE,
 )
+
+# 不是金额的数字：日期、时间、电话/订单/房间号、楼层/线路/数量等
+DATE_RE = re.compile(
+    r"(?<!\d)(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/]\d{1,2})(?!\d)"
+)
+TIME_RE = re.compile(r"\d{1,2}:\d{2}")
+MULT_SPACE_RE = re.compile(r"([×*xX])\s+")
+ID_PREFIX_RE = re.compile(
+    r"(?:验证码|订单号|单号|编号|手机号码|手机号|手机|电话号码|电话|"
+    r"身份证号码|身份证号|身份证|银行卡号|卡号|账号|房间号|房号|房间|学号|工号)"
+    r"\s*[:：]?\s*\d[\d-]*"
+)
+LONG_NUMBER_RE = re.compile(
+    r"(?<!\d)\d{8,}(?:\.\d+)?(?!\d|\s*(?:元|块|rmb))",
+    re.IGNORECASE,
+)
+ORDINAL_RE = re.compile(r"第\s*\d+(?:\.\d+)?")
+NON_AMOUNT_RE = re.compile(
+    r"(?<![×*xX])\d+(?:\.\d+)?\s*(?:"
+    r"号线|号楼|单元|分钟|小时|公里|公斤|千克|厘米|毫米|毫升|个月|"
+    r"月|日|号|楼|层|室|厅|栋|幢|路|站|岁|点|个|杯|人|位|天|年|次|折|"
+    r"斤|克|米|寸|码|升|包|袋|箱|瓶|件|套|双|张|本|支|台|部|辆|秒|分|份|盒|碗|盘|串|只|条|根|颗|粒|片|听|罐|%"
+    r")"
+)
+
+# 金额选择：只有一个候选就用；多个候选只认明确指向“实际支付”的那个
+ACTUAL_CUES = (
+    "实付", "付了", "付款", "支付", "花了", "花", "一共", "总共", "合计",
+    "消费", "充值", "充", "券后", "优惠后", "折后", "现价", "到手价", "买", "交", "缴",
+)
+NEGATIVE_CUES = ("原价", "优惠", "券", "小费", "押金", "定金")
+NEGATIVE_EDGE_CUES = ("满", "减", "省")
+
+
+def _mask_non_amounts(text: str) -> str:
+    """把日期、时间、证件/订单号、楼层/线路/数量等数字替换成空格。
+
+    只用于金额提取，不改原文；否则类别、时间、备注会被破坏。
+    """
+    masked = MULT_SPACE_RE.sub(r"\1", text)
+    masked = DATE_RE.sub(" ", masked)
+    masked = TIME_RE.sub(" ", masked)
+    masked = ID_PREFIX_RE.sub(" ", masked)
+    masked = LONG_NUMBER_RE.sub(" ", masked)
+    masked = ORDINAL_RE.sub(" ", masked)
+    masked = NON_AMOUNT_RE.sub(" ", masked)
+    return masked
+
+
+def _extract_amount(text: str) -> float | None:
+    """从一句话里选一个金额；多个候选且没有“实付”等明确线索时返回 None。
+
+    mock 的原则：宁可不猜，也不把优惠券、原价、日期当成实际金额。
+    """
+    amount_text = _mask_non_amounts(text)
+    candidates = []
+    ignore_until = -1
+    for m in AMOUNT_CANDIDATE_RE.finditer(amount_text):
+        if m.start() < ignore_until:
+            continue
+        value = float(m.group("num").replace(",", ""))
+        mult = m.group("mult")
+        if mult == "万":
+            value *= 10000
+        elif mult == "千":
+            value *= 1000
+        # 25元×2 / 25元*2 / 25元x2 -> 50
+        qty = re.match(r"\s*[×*xX]\s*(\d+)", amount_text[m.end():m.end() + 8])
+        if qty:
+            value *= int(qty.group(1))
+            ignore_until = m.end() + qty.end()
+        value = round(value, 2)
+        has_unit = bool(m.group("prefix") or m.group("unit") or mult)
+        before = amount_text[max(0, m.start() - 4):m.start()]
+        after = amount_text[m.end():m.end() + 4]
+        actual = any(cue in before for cue in ACTUAL_CUES)
+        negative = any(cue in before for cue in NEGATIVE_CUES) or any(
+            cue in after for cue in NEGATIVE_CUES
+        ) or any(before.endswith(cue) for cue in NEGATIVE_EDGE_CUES)
+        score = (3 if has_unit else 0) + (4 if actual else 0) - (2 if negative else 0)
+        candidates.append((value, score, actual, negative))
+
+    if not candidates:
+        return None
+    # 句子里只有优惠/原价/小费，没有任何“实付”类线索：宁可不猜
+    if not any(c[2] for c in candidates) and any(c[3] for c in candidates):
+        return None
+
+    best_score = max(c[1] for c in candidates)
+    best = [c for c in candidates if c[1] == best_score]
+    if len(best) > 1 and len({c[0] for c in best}) > 1:
+        return None
+    chosen = best[0]
+    if chosen[3] and not chosen[2]:
+        return None
+    return chosen[0]
 
 
 def parse_record(text: str) -> dict:
     """离线版 parse_record。返回结构和 B 的正式版完全一致。
 
-    TODO(B) 第 3 天。实现提示：
-        1. 先用 AMOUNT_STRICT_RE 抓带单位的金额，抓不到再用 AMOUNT_RE
-        2. 用 CATEGORY_KEYWORDS 扫关键词定类别，一个都没中就 DEFAULT_CATEGORY
-        3. 时间：含"昨天"就 today-1；含"前天"就 -2；都没有就用今天
-        4. 金额抓不到 -> amount=None，missing_fields 里加 "amount"
-        5. confidence 按"金额和类别都抓到了 = 0.9，缺一个 = 0.5"给
+    金额策略：
+        1. 先屏蔽日期、时间、订单/电话/房间号、楼层/线路/数量等非金额数字
+        2. 从剩余候选里选“实际支付”：只有一个候选就用；多个候选优先“实付/花了/充值”等线索
+        3. 多个候选且没有明确线索 -> amount=None，missing_fields 加 "amount"（交给页面人工确认）
+    类别：CATEGORY_KEYWORDS 扫关键词，没中就 DEFAULT_CATEGORY
+    时间：昨天/前天/今天
+    置信度：金额和类别都抓到 = 0.9，否则 0.5
     """
-    # ① 抓金额：先把日期/序号等非金额数字打码，再抓带单位的，最后抓裸数字
-    amount_text = NON_AMOUNT_RE.sub(" ", text)
-    m = AMOUNT_STRICT_RE.search(amount_text)
-    if m is None:
-        m = AMOUNT_RE.search(amount_text)
-    amount = float(m.group(1)) if m else None
+    # ① 抓金额：先屏蔽非金额数字，再从候选里选实际支付
+    amount = _extract_amount(text)
 
     # ② 定类别：扫关键词表
     category = DEFAULT_CATEGORY
