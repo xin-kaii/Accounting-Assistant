@@ -41,6 +41,12 @@ AMOUNT_RE = re.compile(r"(\d+(?:\.\d{1,2})?)\s*(?:元|块|rmb|￥|¥)?", re.IGNO
 # 明确带单位的金额优先（避免把"3号线"识别成 3 元）
 AMOUNT_STRICT_RE = re.compile(r"(?:￥|¥)?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)")
 
+# 日期/序号/数量等“不是金额”的数字：抓金额前先打码
+# 只用于金额提取，不要拿它改写原文，否则类别/时间/备注会被破坏
+NON_AMOUNT_RE = re.compile(
+    r"\d+(?:\.\d+)?\s*(?:号线|分钟|小时|公里|个月|月|日|号|楼|层|路|岁|点|个|杯|人|位|天|年|%)"
+)
+
 
 def parse_record(text: str) -> dict:
     """离线版 parse_record。返回结构和 B 的正式版完全一致。
@@ -52,10 +58,11 @@ def parse_record(text: str) -> dict:
         4. 金额抓不到 -> amount=None，missing_fields 里加 "amount"
         5. confidence 按"金额和类别都抓到了 = 0.9，缺一个 = 0.5"给
     """
-        # ① 抓金额：先抓带单位的，抓不到再抓裸数字
-    m = AMOUNT_STRICT_RE.search(text)
+    # ① 抓金额：先把日期/序号等非金额数字打码，再抓带单位的，最后抓裸数字
+    amount_text = NON_AMOUNT_RE.sub(" ", text)
+    m = AMOUNT_STRICT_RE.search(amount_text)
     if m is None:
-        m = AMOUNT_RE.search(text)
+        m = AMOUNT_RE.search(amount_text)
     amount = float(m.group(1)) if m else None
 
     # ② 定类别：扫关键词表
