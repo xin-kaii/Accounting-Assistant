@@ -53,7 +53,9 @@ SYSTEM_PROMPT_RECEIPT = f"""你是小票/支付截图识别助手。用户会给
 【输出要求】只输出一个 JSON 对象，不要解释文字，不要 markdown 代码块：
 {{
   "is_receipt": 布尔，这张图是不是小票/支付截图/账单。不是的话后面字段随便填、confidence 填 0,
-  "amount": 数字，**这笔消费的总额**，单位元。认不出就填 null,
+  "amount": 数字，**这一笔最终支付的金额**，单位元。认不出就填 null,
+  "paid": 数字，图上"实付 / 支付金额 / 优惠后金额"那个数，没有就 null,
+  "total": 数字，图上"总价 / 合计"那个数（没减优惠的），没有就 null,
   "direction": "expense" 或 "income"，默认 "expense",
   "category": 从这些里选一个：{"、".join(CATEGORIES)}。判断不了填 "其他",
   "subcategory": 更细的分类，可为 null,
@@ -192,7 +194,12 @@ def _to_datetime(value) -> str:
 
 def _normalize(raw: dict) -> dict:
     """字段补全 + 校验。**页面只认这个结构**。"""
-    amount = _to_amount(raw.get("amount"))
+    # 金额优先级：paid（实付）> amount > total（总价）。
+    # 外卖/支付截图上"总价"和"实付"是两个数，模型偶尔会把总价填进 amount，
+    # 所以优先用它单独填的 paid 字段；正则兜底在 _fix_amount_with_text 里。
+    amount = _to_amount(raw.get("paid")) or _to_amount(raw.get("amount"))
+    if amount is None:
+        amount = _to_amount(raw.get("total"))
     category = raw.get("category")
     if category not in CATEGORIES:
         category = DEFAULT_CATEGORY

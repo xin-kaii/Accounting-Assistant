@@ -97,6 +97,16 @@ def test_missing_amount_is_reported():
     assert "amount" in result["missing_fields"]
 
 
+def test_paid_wins_over_total():
+    """外卖单上同时有总价和实付时，记账要记实付。"""
+    result = _normalize({"amount": 15.9, "paid": 13.4, "total": 15.9})
+    assert result["amount"] == 13.4
+
+
+def test_falls_back_to_total_when_no_paid():
+    assert _normalize({"amount": None, "total": 36.0})["amount"] == 36.0
+
+
 @pytest.mark.parametrize(
     "raw,expected",
     [

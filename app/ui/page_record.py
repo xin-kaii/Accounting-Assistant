@@ -508,19 +508,16 @@ def render_confirm_card(record: dict) -> dict | None:
 
         if save:
             occurred_at = f"{day.isoformat()} {clock.strftime('%H:%M:%S')}"
-            return {
-                "amount": round(float(amount), 2),
-                "direction": direction,
-                "category": category,
-                "subcategory": (subcategory or "").strip() or None,
-                "merchant": (merchant or "").strip() or None,
-                "note": (note or "").strip() or None,
-                "occurred_at": occurred_at,
-                "confidence": record.get("confidence"),
-                "missing_fields": [],
-                "raw_input": record.get("raw_input"),
-                "source": SOURCE_TEXT,
-            }
+            return _compose_record(
+                record,
+                amount=amount,
+                direction=direction,
+                category=category,
+                occurred_at=occurred_at,
+                merchant=merchant,
+                note=note,
+                subcategory=subcategory,
+            )
 
     return None
 
@@ -528,6 +525,29 @@ def render_confirm_card(record: dict) -> dict | None:
 # ============================================================
 # 六、整页
 # ============================================================
+
+def _compose_record(record: dict, *, amount: float, direction: str, category: str,
+                    occurred_at: str, merchant: str | None, note: str | None,
+                    subcategory: str | None) -> dict:
+    """把卡片上的值组装成入库用的 record。
+
+    ⚠️ source 必须从草稿继承：小票识别传的是 receipt，写死成 text 的话，
+    数据库里就分不出"这张账是拍照来的还是打字来的"——答辩要统计三种录入方式会直接翻车。
+    """
+    return {
+        "amount": round(float(amount), 2),
+        "direction": direction,
+        "category": category,
+        "subcategory": (subcategory or "").strip() or None,
+        "merchant": (merchant or "").strip() or None,
+        "note": (note or "").strip() or None,
+        "occurred_at": occurred_at,
+        "confidence": record.get("confidence"),
+        "missing_fields": [],
+        "raw_input": record.get("raw_input"),
+        "source": record.get("source") or SOURCE_TEXT,
+    }
+
 
 def render() -> None:
     """渲染记账页。"""
