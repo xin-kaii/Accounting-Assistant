@@ -20,13 +20,18 @@ from app.money import to_cents, to_yuan
 
 
 def _parse_month(month: object) -> str:
-    """month 只认 'YYYY-MM'。和日期一样：口径错了宁可报错，不要静默查空。"""
+    """month 只认 'YYYY-MM'。和日期一样：口径错了宁可报错，不要静默查空。
+
+    strptime 对 %m 很宽容，"2026-1" 也能解析，但账单侧 substr(occurred_at,1,7)
+    产出的是补零的 "2026-01"，"2026-1" 永远匹配不上 -> 预算变成孤儿数据。
+    所以解析后必须归一化回写。
+    """
     text = str(month or "").strip()
     try:
-        datetime.strptime(text, MONTH_FMT)
+        parsed = datetime.strptime(text, MONTH_FMT)
     except ValueError:
         raise ValueError(f"month 必须是 'YYYY-MM'，收到 {month!r}") from None
-    return text
+    return parsed.strftime(MONTH_FMT)
 
 
 def _parse_category(category: object) -> str:

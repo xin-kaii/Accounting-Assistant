@@ -24,10 +24,13 @@ def _parse_date(value: object, name: str) -> str:
         return value.strftime(_DATE_FMT)
     text = str(value or "").strip()
     try:
-        datetime.strptime(text, _DATE_FMT)
+        parsed = datetime.strptime(text, _DATE_FMT)
     except ValueError:
         raise ValueError(f"{name} 必须是 'YYYY-MM-DD'，收到 {value!r}") from None
-    return text
+    # 归一化后再返回：strptime 对 %d/%m 很宽容，"2026-11-3" 也能解析，
+    # 但库里存的是补零格式，"2026-11-3 00:00:00" 和 "2026-11-05 ..." 做
+    # 字符串比较会错位，整个区间就悄悄查错了。必须回写成补零格式。
+    return parsed.strftime(_DATE_FMT)
 
 
 def get_stats(
