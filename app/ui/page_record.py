@@ -314,6 +314,7 @@ def _record_from_ocr(result: dict) -> dict:
         record["_note"] = f"来源：小票识别（置信度 {confidence:.0%}）"
     else:
         record["_note"] = "来源：小票识别"
+    record["_source"] = "vision"
     return record
 
 
@@ -437,15 +438,29 @@ def render_confirm_card(record: dict) -> dict | None:
         head_left.markdown("#### 确认一下这笔账，哪项不对直接改")
 
         confidence = record.get("confidence")
-        if isinstance(confidence, (int, float)):
-            head_right.caption(f"AI 把握：{confidence:.0%}")
+        shown = f"{confidence:.0%}" if isinstance(confidence, (int, float)) else "未知"
+        head_right.caption(f"AI 把握：{shown}")
+
+        # 来源说明：让人一眼看出这一步到底有没有调模型
+        src = record.get("_source")
+        if src == "fallback":
+            st.caption(f"⚠️ 当前为离线兜底解析（{record.get('_note') or '规则匹配'}）· 把握 {shown}")
+        elif src == "vision":
+            st.caption(f"✅ 已用小票识别（视觉模型）· 把握 {shown}")
+        elif src == "llm":
+            st.caption(f"✅ 已用大模型解析 · 把握 {shown}")
         else:
-            head_right.caption("AI 把握：未知")
+            st.caption(f"解析方式未标记 · 把握 {shown}")
 
         missing = list(record.get("missing_fields") or [])
         if missing:
             hints = [_MISSING_HINTS.get(f, f"缺少「{_FIELD_LABELS.get(f, f)}」") for f in missing]
             st.warning("AI 没完全听清：" + "；".join(hints) + "。补上才能记账。")
+            if "amount" in missing:
+                st.caption(
+                    "这句话里没有确切金额，模型**没有猜**（避免记进一个你没确认过的数字）——"
+                    "请在上面的「金额」里补一个数。"
+                )
 
         raw_text = record.get("raw_text")
         if raw_text:
@@ -588,12 +603,15 @@ def render() -> None:
         if not text:
             st.warning("先打一句话，比如『午饭 25，和同事 AA』。")
         else:
-            record, note = _parse_text(text)
+            with st.spinner("正在解析这句话…（走真模型约 3-7 秒，离线兜底会很快）"):
+                record, note = _parse_text(text)
             st.session_state["rec_parse_state"] = (
                 "页面内置规则（B 的 parse_record 未接通）" if note else "B 的 parse_record"
             )
             record["_id"] = int(st.session_state.get("rec_draft_seq", 0)) + 1
             record["_note"] = note
+            # 标记这一笔是"真模型解析"还是"离线兜底"，卡片上要给用户看
+            record["_source"] = "fallback" if note else "llm"
             st.session_state["rec_draft_seq"] = record["_id"]
             st.session_state["rec_draft"] = record
             st.session_state["rec_flash"] = None
@@ -624,9 +642,10 @@ def render() -> None:
         else:
             try:
                 # ReceiptError 继承 ValueError：格式不对、不是小票、没 Key 都走这里
-                result = _extract_receipt_from_c(
-                    uploaded.getvalue(), uploaded.type or "image/jpeg"
-                )
+                with st.spinner("正在识别这张图…（视觉模型约 3-5 秒）"):
+                    result = _extract_receipt_from_c(
+                        uploaded.getvalue(), uploaded.type or "image/jpeg"
+                    )
             except ValueError as exc:
                 st.error(f"识别失败：{exc}")
             else:
