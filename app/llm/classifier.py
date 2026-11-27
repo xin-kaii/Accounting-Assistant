@@ -6,6 +6,10 @@
 
 from __future__ import annotations
 
+from app import config
+from app.constants import CATEGORIES, DEFAULT_CATEGORY
+from app.llm import client, mock_llm, prompts
+
 
 def classify(text: str) -> tuple[str, float]:
     """返回 (类别, 置信度)。
@@ -16,7 +20,19 @@ def classify(text: str) -> tuple[str, float]:
     实现路径同 parser：
         config.llm_ready() -> client.chat_json(prompts.SYSTEM_CLASSIFY, text)
         否则               -> mock_llm.classify(text)
-
-    TODO(B) 第 5-6 天
     """
-    raise NotImplementedError("TODO(B) 第 5-6 天")
+    if config.llm_ready():
+        try:
+            raw = client.chat_json(prompts.SYSTEM_CLASSIFY, text)
+            category = raw.get("category")
+            if category not in CATEGORIES:
+                category = DEFAULT_CATEGORY
+            try:
+                confidence = float(raw.get("confidence"))
+            except (TypeError, ValueError):
+                confidence = 0.3
+            confidence = max(0.0, min(1.0, confidence))
+            return category, confidence
+        except client.LLMError:
+            return mock_llm.classify(text)
+    return mock_llm.classify(text)
