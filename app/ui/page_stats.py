@@ -54,7 +54,9 @@ def render() -> None:
     # ---------- 顶部三个指标卡 ----------
     col_total, col_count, col_max = st.columns(3)
     col_total.metric(f"{period}支出", f"¥{stats['total']:,.2f}")
-    col_count.metric("笔数", f"{stats['count']} 笔")
+    # 注意：标签带 period，避免和账单页的「笔数」重名——
+    # 两个 tab 同名指标会让自动化脚本取错值（scripts/check_e2e.py 就踩过）。
+    col_count.metric(f"{period}笔数", f"{stats['count']} 笔")
     if stats["max_single"]:
         merchant = stats["max_single"]["merchant"] or "未知商户"
         col_max.metric(
