@@ -5,6 +5,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+pytest-cache-files-*/
 .coverage
 htmlcov/
 
@@ -45,8 +46,14 @@ _*.txt
 _*.bat
 _*.log
 
-# pytest 在没设 TEMP 环境变量的 Git Bash 里会把临时目录建到项目根目录
-pytest-of-*/
+# ===== 真实小票照片：可能带姓名/地址，公开仓库不要收 =====
+# 合成测试图（sample_*.png）照常提交，评审要能复现
+samples/receipts/real_*.jpg
+samples/receipts/real_*.jpeg
+samples/receipts/real_*.png
 
-# conftest ???????TEMP ??????????
+# ===== pytest 临时目录 =====
+# 没设 TEMP 的 Git Bash 里，pytest 会把临时目录建到项目根目录
+pytest-of-*/
+# tests/conftest.py 用 mkdtemp(prefix="ledger_test_")，万一落在项目根目录也别提交
 ledger_test_*/
