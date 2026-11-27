@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from app.constants import (
     BUDGET_OVER_RATIO,
     BUDGET_WARN_RATIO,
@@ -15,23 +13,9 @@ from app.constants import (
     LEVEL_OVER,
     LEVEL_WARN,
 )
-from app.db.conn import MONTH_FMT, now_str, tx
+from app.dates import parse_month
+from app.db.conn import now_str, tx
 from app.money import to_cents, to_yuan
-
-
-def _parse_month(month: object) -> str:
-    """month 只认 'YYYY-MM'。和日期一样：口径错了宁可报错，不要静默查空。
-
-    strptime 对 %m 很宽容，"2026-1" 也能解析，但账单侧 substr(occurred_at,1,7)
-    产出的是补零的 "2026-01"，"2026-1" 永远匹配不上 -> 预算变成孤儿数据。
-    所以解析后必须归一化回写。
-    """
-    text = str(month or "").strip()
-    try:
-        parsed = datetime.strptime(text, MONTH_FMT)
-    except ValueError:
-        raise ValueError(f"month 必须是 'YYYY-MM'，收到 {month!r}") from None
-    return parsed.strftime(MONTH_FMT)
 
 
 def _parse_category(category: object) -> str:
@@ -67,7 +51,7 @@ def set_budget(month: str, amount: float, category: str = "") -> None:
     注意：schema 里 category 用 '' 而不是 NULL，因为 SQLite 里 NULL != NULL，
           UNIQUE 约束拦不住重复插入。
     """
-    month = _parse_month(month)
+    month = parse_month(month)
     category = _parse_category(category)
     cents = _parse_amount(amount)
 
@@ -92,7 +76,7 @@ def get_budgets(month: str) -> list[dict]:
     category 为 '' 表示总预算（'' 比任何非空字符串都小，ASC 排序天然排最前）。
     amount 返回「元」，和设置时单位一致。
     """
-    month = _parse_month(month)
+    month = parse_month(month)
     with tx() as conn:
         rows = conn.execute(
             "SELECT category, amount FROM budgets WHERE month = ? ORDER BY category",
@@ -107,7 +91,7 @@ def delete_budget(month: str, category: str = "") -> bool:
     因为入库时 category 存的是 '' 而不是 NULL，这里普通的 = 就能匹配；
     如果当初存了 NULL，就得写 category IS NULL（NULL 和 NULL 不相等）。
     """
-    month = _parse_month(month)
+    month = parse_month(month)
     category = str(category or "").strip()
     with tx() as conn:
         cur = conn.execute(
@@ -149,7 +133,7 @@ def check_budget(month: str) -> list[dict]:
     特殊情况：预算设了 0 元且该类有支出 -> ratio = inf（无限超支），
     level 照常判 over；页面显示时要注意 inf 不能直接放进进度条。
     """
-    month = _parse_month(month)
+    month = parse_month(month)
 
     with tx() as conn:
         budget_rows = conn.execute(

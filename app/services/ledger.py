@@ -14,6 +14,7 @@ from app.constants import (
     SOURCE_MANUAL,
     SOURCES,
 )
+from app.dates import parse_day
 from app.db.conn import DATETIME_FMT, now_str, tx
 from app.money import to_cents, to_yuan
 
@@ -190,7 +191,9 @@ def list_transactions(
 ) -> list[dict]:
     """按条件查账单，按 occurred_at 倒序（最新的在前）。
 
-    start / end 都是 'YYYY-MM-DD'，闭区间（含当天）。
+    start / end 都是 'YYYY-MM-DD'，闭区间（含当天）；date 对象也收。
+    日期会先归一化成补零格式（'2026-11-3' -> '2026-11-03'），
+    否则拼进 SQL 的字符串比较会错位、静默查错。start 晚于 end 抛 ValueError。
     category / direction 传 None 或空串表示不筛；direction 会去空格并忽略大小写。
     limit 会被夹到 1~1000（传 0 或负数不会是「不限」）。
 
@@ -201,16 +204,22 @@ def list_transactions(
 
     TODO(A) 第 3-4 天
     """
+    # 先归一化：'2026-11-3' 这种没补零的输入直接拼进 SQL，字符串比较会错位
+    start_day = parse_day(start, "start") if start is not None and str(start).strip() else None
+    end_day = parse_day(end, "end") if end is not None and str(end).strip() else None
+    if start_day and end_day and start_day > end_day:
+        raise ValueError(f"start 不能晚于 end：{start_day!r} > {end_day!r}")
+
     sql = "SELECT * FROM transactions WHERE 1 = 1"
     params: list[object] = []
 
     # 闭区间：start 从当天 00:00:00 起，end 到当天 23:59:59 止
-    if start:
+    if start_day:
         sql += " AND occurred_at >= ?"
-        params.append(f"{start} 00:00:00")
-    if end:
+        params.append(f"{start_day} 00:00:00")
+    if end_day:
         sql += " AND occurred_at <= ?"
-        params.append(f"{end} 23:59:59")
+        params.append(f"{end_day} 23:59:59")
     if category is not None and str(category).strip():
         sql += " AND category = ?"
         params.append(str(category).strip())

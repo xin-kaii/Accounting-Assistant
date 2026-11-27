@@ -5,32 +5,9 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
-
+from app.dates import parse_day
 from app.db.conn import tx
 from app.money import to_yuan
-
-_DATE_FMT = "%Y-%m-%d"
-
-
-def _parse_date(value: object, name: str) -> str:
-    """start / end 校验：只认 'YYYY-MM-DD'（date 对象也收，转成字符串）。
-
-    统计最怕的不是报错，是**口径悄悄错了**——比如把 "2026-11" 拼进 SQL，
-    查出来永远是空列表，页面显示 0 元，看起来"没问题"其实全错。
-    所以这里宁可大声报错。
-    """
-    if isinstance(value, date):
-        return value.strftime(_DATE_FMT)
-    text = str(value or "").strip()
-    try:
-        parsed = datetime.strptime(text, _DATE_FMT)
-    except ValueError:
-        raise ValueError(f"{name} 必须是 'YYYY-MM-DD'，收到 {value!r}") from None
-    # 归一化后再返回：strptime 对 %d/%m 很宽容，"2026-11-3" 也能解析，
-    # 但库里存的是补零格式，"2026-11-3 00:00:00" 和 "2026-11-05 ..." 做
-    # 字符串比较会错位，整个区间就悄悄查错了。必须回写成补零格式。
-    return parsed.strftime(_DATE_FMT)
 
 
 def get_stats(
@@ -65,8 +42,8 @@ def get_stats(
     - start 晚于 end 时抛 ValueError（和 list_transactions 一致，不静默返回空）
     - max_single 在区间内一笔支出都没有时返回 None，页面要判空
     """
-    start = _parse_date(start, "start")
-    end = _parse_date(end, "end")
+    start = parse_day(start, "start")
+    end = parse_day(end, "end")
     # 反区间不报错的话会静默返回"0 元"，看起来像这个月没花钱——和 ledger 一样直接抛
     if start > end:
         raise ValueError(f"start 不能晚于 end：{start!r} > {end!r}")
