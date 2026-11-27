@@ -238,6 +238,15 @@ def _normalize(raw: dict, text: str) -> dict:
 # 三、两个交界点的"能跑就跑真的，跑不了走演示"
 # ============================================================
 
+def _llm_ready() -> bool:
+    """文本模型到底能不能用（没 Key / 开了强制离线都会返回 False）。"""
+    try:
+        from app import config
+        return bool(config.llm_ready())
+    except Exception:  # pragma: no cover
+        return False
+
+
 def _parse_text(text: str) -> tuple[dict, str]:
     """一句话 -> (标准 record, 给用户看的说明)。
 
@@ -441,16 +450,20 @@ def render_confirm_card(record: dict) -> dict | None:
         shown = f"{confidence:.0%}" if isinstance(confidence, (int, float)) else "未知"
         head_right.caption(f"AI 把握：{shown}")
 
-        # 来源说明：让人一眼看出这一步到底有没有调模型
+        # 来源说明：让人一眼看出这一步到底有没有调模型。
+        # ⚠️ 不能一见 parse_record 返回就写"大模型"：没配 Key 时它内部会退到离线规则，
+        #    页面上写"大模型"会让答辩问答直接穿帮。
         src = record.get("_source")
         if src == "fallback":
-            st.caption(f"⚠️ 当前为离线兜底解析（{record.get('_note') or '规则匹配'}）· 把握 {shown}")
+            st.caption(f"⚠️ 当前为离线兜底解析（{record.get('_note') or '规则匹配'}）")
         elif src == "vision":
-            st.caption(f"✅ 已用小票识别（视觉模型）· 把握 {shown}")
+            st.caption("✅ 已用小票识别（视觉模型）")
+        elif src == "rules":
+            st.caption("✅ 已用离线规则解析（没配文本模型 Key，走的是本地关键词）")
         elif src == "llm":
-            st.caption(f"✅ 已用大模型解析 · 把握 {shown}")
+            st.caption("✅ 已用大模型解析")
         else:
-            st.caption(f"解析方式未标记 · 把握 {shown}")
+            st.caption("解析方式未标记")
 
         missing = list(record.get("missing_fields") or [])
         if missing:
@@ -489,7 +502,7 @@ def render_confirm_card(record: dict) -> dict | None:
             note = st.text_input("备注", key=key("note"))
             subcategory = st.text_input("小类", key=key("sub"))
 
-        if amount <= 0:
+        if amount <= 0 and "amount" not in missing:
             st.caption("金额还空着，填上才能记；不想记了就点「取消」。")
 
         # AI 没把握时，不能让人闭着眼点确认（第 8 天的验收项）。
@@ -499,7 +512,7 @@ def render_confirm_card(record: dict) -> dict | None:
         if needs_review:
             confidence = record.get("confidence")
             shown = f"{confidence:.0%}" if isinstance(confidence, (int, float)) else "未知"
-            st.error(f"AI 对这次识别没把握（置信度 {shown}），必须逐项核对后才能记账。")
+            st.error("AI 把握不足，请逐项核对后再记账。")
             acknowledged = st.checkbox(
                 "我已逐项核对金额、类别、时间、商户", key=key("ack")
             )
@@ -611,7 +624,9 @@ def render() -> None:
             record["_id"] = int(st.session_state.get("rec_draft_seq", 0)) + 1
             record["_note"] = note
             # 标记这一笔是"真模型解析"还是"离线兜底"，卡片上要给用户看
-            record["_source"] = "fallback" if note else "llm"
+            record["_source"] = (
+                "fallback" if note else ("llm" if _llm_ready() else "rules")
+            )
             st.session_state["rec_draft_seq"] = record["_id"]
             st.session_state["rec_draft"] = record
             st.session_state["rec_flash"] = None
