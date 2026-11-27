@@ -61,18 +61,28 @@ def _render_budget_row(month: str, row: dict) -> None:
     else:
         pct_text = f"{row['ratio'] * 100:.0f}%"
 
+    # 剩余为负时改说"超支"，比"剩余 ¥-12.00"直观
+    if row["remain"] < 0:
+        remain_text = f"超支 ¥{-row['remain']:,.2f}"
+    else:
+        remain_text = f"剩余 ¥{row['remain']:,.2f}"
+
     col_bar, col_del = st.columns([8, 1])
     with col_bar:
         st.markdown(
             f"{emoji} **{name}**　已花 **¥{row['spent']:,.2f}**"
-            f" / 上限 ¥{row['budget']:,.2f}　剩余 ¥{row['remain']:,.2f}（{pct_text}）"
+            f" / 上限 ¥{row['budget']:,.2f}　{remain_text}（{pct_text}）"
         )
         _bar(row["ratio"], LEVEL_COLORS[level])
     with col_del:
         # key 必须唯一，不然 5 根条共用一个按钮状态会互相打架
         if st.button("删除", key=f"del-{month}-{row['category']}", width="stretch"):
-            delete_budget(month, row["category"])
-            st.rerun()  # 删完立刻重画，不然列表还留着刚删的那条
+            try:
+                delete_budget(month, row["category"])
+            except Exception as exc:
+                st.error(f"删除失败（{type(exc).__name__}: {exc}）")
+            else:
+                st.rerun()  # 删完立刻重画，不然列表还留着刚删的那条
 
 
 def render() -> None:
@@ -111,7 +121,11 @@ def render() -> None:
     st.divider()
     st.markdown(f"#### {month} 执行情况")
 
-    rows = check_budget(month)
+    try:
+        rows = check_budget(month)
+    except Exception as exc:      # 数据库被锁 / 预算表坏了，页面也不能红屏
+        st.error(f"预算读取失败（{type(exc).__name__}: {exc}）")
+        return
     if not rows:
         st.info("这个月还没设预算。用上面的表单加一条吧。")
         return

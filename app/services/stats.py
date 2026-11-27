@@ -59,10 +59,14 @@ def get_stats(
     - **金额字段返回的单位都是「元」**（total / avg / amount / max_single.amount）
       SQL 里在「分」上求和（整数，精确），最后统一 money.to_yuan() 转成元返回
     - category 传 None / 空串表示不筛（和 list_transactions 同一套约定）
+    - start 晚于 end 时抛 ValueError（和 list_transactions 一致，不静默返回空）
     - max_single 在区间内一笔支出都没有时返回 None，页面要判空
     """
     start = _parse_date(start, "start")
     end = _parse_date(end, "end")
+    # 反区间不报错的话会静默返回"0 元"，看起来像这个月没花钱——和 ledger 一样直接抛
+    if start > end:
+        raise ValueError(f"start 不能晚于 end：{start!r} > {end!r}")
 
     # 闭区间，和 list_transactions 完全同一套口径：
     # start 从当天 00:00:00 起，end 到当天 23:59:59 止。
@@ -88,11 +92,11 @@ def get_stats(
         ).fetchone()
 
         # 2) 单笔最高：按金额倒序取第一行，顺带把它的商户和时间带出来。
-        #    并列最高时取哪条无所谓（LIMIT 1），页面只展示一条。
+        #    并列最高时按 id 再排一次，结果才是确定的（否则测试断言具体商户会偶发失败）。
         max_row = conn.execute(
             f"""SELECT amount, merchant, occurred_at
                 FROM transactions WHERE {where}
-                ORDER BY amount DESC LIMIT 1""",
+                ORDER BY amount DESC, id DESC LIMIT 1""",
             params,
         ).fetchone()
 

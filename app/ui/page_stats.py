@@ -45,7 +45,11 @@ def render() -> None:
     else:  # 今年
         start, end = date(today.year, 1, 1), today
 
-    stats = get_stats(str(start), str(end))
+    try:
+        stats = get_stats(str(start), str(end))
+    except Exception as exc:      # 数据库被锁 / 日期非法，都不能让页面红屏
+        st.error(f"统计失败（{type(exc).__name__}: {exc}）")
+        return
 
     # ---------- 顶部三个指标卡 ----------
     col_total, col_count, col_max = st.columns(3)
@@ -80,7 +84,11 @@ def render() -> None:
 
     # 趋势固定看"今年 1 月至今"，不跟着上面的切换变：
     # 选"本月"时区间里只有一个月，折线图只剩一个点，画不出"趋势"。
-    trend = get_stats(f"{today.year}-01-01", str(today))
+    try:
+        trend = get_stats(f"{today.year}-01-01", str(today))
+    except Exception as exc:
+        st.warning(f"月度趋势查不出来（{type(exc).__name__}: {exc}）")
+        return
     by_month = {row["month"]: row["amount"] for row in trend["monthly_trend"]}
 
     # GROUP BY 只会给"有支出"的月份，没花的月份要自己补 0，
