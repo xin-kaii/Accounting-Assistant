@@ -1,4 +1,4 @@
-﻿"""小票 / 支付截图识别（Owner: C｜第 5-6 天完成，第 3-4 天先把骨架立起来）
+"""小票 / 支付截图识别（Owner: C｜第 5-6 天完成，第 3-4 天先把骨架立起来）
 
 思路：**不自己写 OCR**。直接把图片丢给视觉大模型，让它返回 JSON。
      不用 Tesseract、不用 OpenCV 预处理、不用训练。
@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import re
 from datetime import datetime
@@ -52,7 +53,9 @@ SYSTEM_PROMPT_RECEIPT = f"""你是小票/支付截图识别助手。用户会给
 【输出要求】只输出一个 JSON 对象，不要解释文字，不要 markdown 代码块：
 {{
   "is_receipt": 布尔，这张图是不是小票/支付截图/账单。不是的话后面字段随便填、confidence 填 0,
-  "amount": 数字，**这笔消费的总额**，单位元。认不出就填 null,
+  "amount": 数字，**这一笔最终支付的金额**，单位元。认不出就填 null,
+  "paid": 数字，图上"实付 / 支付金额 / 优惠后金额"那个数，没有就 null,
+  "total": 数字，图上"总价 / 合计"那个数（没减优惠的），没有就 null,
   "direction": "expense" 或 "income"，默认 "expense",
   "category": 从这些里选一个：{"、".join(CATEGORIES)}。判断不了填 "其他",
   "subcategory": 更细的分类，可为 null,
@@ -191,7 +194,12 @@ def _to_datetime(value) -> str:
 
 def _normalize(raw: dict) -> dict:
     """字段补全 + 校验。**页面只认这个结构**。"""
-    amount = _to_amount(raw.get("amount"))
+    # 金额优先级：paid（实付）> amount > total（总价）。
+    # 外卖/支付截图上"总价"和"实付"是两个数，模型偶尔会把总价填进 amount，
+    # 所以优先用它单独填的 paid 字段；正则兜底在 _fix_amount_with_text 里。
+    amount = _to_amount(raw.get("paid")) or _to_amount(raw.get("amount"))
+    if amount is None:
+        amount = _to_amount(raw.get("total"))
     category = raw.get("category")
     if category not in CATEGORIES:
         category = DEFAULT_CATEGORY
@@ -263,6 +271,38 @@ def _fix_amount_with_text(result: dict) -> dict:
     return result
 
 
+def _sniff_image_type(data: bytes) -> str | None:
+    """看文件头判断真实类型。
+
+    为什么不能只信上传控件给的 mime：用户把 .gif 改名成 .jpg、或者从微信另存成 .jpg
+    实际是 webp，都会让声明的类型和真实内容不一致。按文件头判断最稳。
+    """
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _is_intact_image(data: bytes) -> bool:
+    """用 Pillow 验一下图片能不能打开（能打开不代表是小票，只代表没坏）。
+
+    没装 Pillow 就不做这一步，不能因为一个可选依赖把识别整体堵死。
+    """
+    try:
+        from PIL import Image
+    except ImportError:  # pragma: no cover
+        return True
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            image.verify()
+        return True
+    except Exception:
+        return False
+
+
 def extract_receipt(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
     """图片 -> 标准账单数据（字段和 B 的 parse_record 完全一致）。
 
@@ -281,7 +321,7 @@ def extract_receipt(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
     }
 
     raise ReceiptError（= ValueError）：格式不支持 / 超过 5MB / 没配 Key /
-        模型调用失败 / 完全没认出来
+        文件不是图片（扩展名改过）/ 图片损坏 / 模型调用失败 / 完全没认出来
 
     必须处理的四种情况（答辩会问）：
     1. 金额是 0 或没认出来 -> amount=None，missing_fields 加 "amount"
@@ -295,6 +335,18 @@ def extract_receipt(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
         raise ReceiptError(f"图片超过 {MAX_SIZE_MB}MB，请压缩后再上传")
     if mime_type not in ALLOWED_TYPES:
         raise ReceiptError(f"不支持的图片格式：{mime_type}（只支持 JPG / PNG / WEBP）")
+
+    # ① 文件头对不上：把 .gif/.pdf 改名成 .jpg 是最常见的"假图"
+    real_type = _sniff_image_type(image_bytes)
+    if real_type is None:
+        raise ReceiptError("这个文件不是图片（或扩展名被改过）：请上传 JPG / PNG / WEBP 的小票照片")
+
+    # ② 以真实类型为准。声明成 jpeg、实际是 png 时，用错的 MIME 可能让模型直接报错
+    mime_type = real_type
+
+    # ③ 图片本身损坏/被截断：模型会返回一个莫名其妙的错，不如在这里说人话
+    if not _is_intact_image(image_bytes):
+        raise ReceiptError("这张图打不开（可能损坏或没传完整），请重新导出后再上传")
 
     raw = _ask_vision(image_bytes, mime_type)
 

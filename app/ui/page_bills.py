@@ -142,7 +142,11 @@ def render() -> None:
         st.caption(f"当前查询区间：{start} ~ {end}")
         return
     except Exception as exc:  # noqa: BLE001 - 数据库坏了也不能让页面崩
-        st.error(f"查询失败（{type(exc).__name__}: {exc}）")
+        if "no such table" in str(exc):
+            st.error("数据库还没初始化：先在项目根目录跑 "
+                     "`python -c \"from app.db.conn import init_db; init_db()\"`")
+        else:
+            st.error(f"查询失败（{type(exc).__name__}: {exc}）")
         return
 
     st.caption(f"查询区间：{start} ~ {end} ｜ 共 {len(rows)} 笔")

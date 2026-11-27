@@ -1,4 +1,4 @@
-﻿"""记账页（Owner: C｜第 3-4 天｜数据对接：B）
+"""记账页（Owner: C｜第 3-4 天｜数据对接：B）
 
 页面流程（这也是答辩会被问的那道题，要能讲清楚）：
     1. 用户在输入框打"午饭 25，和同事 AA"
@@ -61,9 +61,11 @@ except Exception:  # pragma: no cover
     _add_transaction_from_a = None
 
 try:  # C 的小票识别（第 5-6 天接通；没接通时页面只显示错误，不影响文字记账）
+    from app.ocr.receipt import LOW_CONFIDENCE as _OCR_LOW_CONFIDENCE
     from app.ocr.receipt import extract_receipt as _extract_receipt_from_c
 except Exception:  # pragma: no cover
     _extract_receipt_from_c = None
+    _OCR_LOW_CONFIDENCE = 0.6
 
 
 # ============================================================
@@ -271,7 +273,29 @@ def _save_record(record: dict) -> tuple[int | None, str]:
     except NotImplementedError:
         return None, "A 的 add_transaction() 还没接通，这笔账只放在本次会话里，刷新就没了。"
     except Exception as exc:
+        message = str(exc)
+        if "no such table" in message:
+            return None, (
+                "数据库还没初始化：先在项目根目录跑 "
+                "`python -c \"from app.db.conn import init_db; init_db()\"`，再点一次确认。"
+            )
         return None, f"入库失败（{type(exc).__name__}: {exc}），这笔账只放在本次会话里。"
+
+
+def _needs_review(record: dict) -> bool:
+    """要不要强制人工逐项核对。
+
+    两条判据（和 app/ocr/receipt.needs_manual_review 保持一致的口径）：
+    1. 置信度低于阈值（模型自己说没把握）
+    2. missing_fields 非空（少了字段，等于没认全）
+
+    为什么页面自己再判一次、不直接调 needs_manual_review：
+    文字记账那条路没有 OCR 模块也能用，不能因为一个可选依赖把页面搞挂。
+    """
+    if record.get("missing_fields"):
+        return True
+    confidence = record.get("confidence")
+    return isinstance(confidence, (int, float)) and confidence < _OCR_LOW_CONFIDENCE
 
 
 def _record_from_ocr(result: dict) -> dict:
@@ -282,6 +306,9 @@ def _record_from_ocr(result: dict) -> dict:
     """
     record = dict(result)
     record["source"] = SOURCE_RECEIPT
+    # ledger 的 raw_input 约定是"用户原话或 OCR 原文"。
+    # 不存的话，事后想查"当时图上到底写了什么"就只剩 raw_text 在页面里，刷新就没了。
+    record["raw_input"] = (str(result.get("raw_text") or "")[:1000] or None)
     confidence = result.get("confidence")
     if isinstance(confidence, (int, float)):
         record["_note"] = f"来源：小票识别（置信度 {confidence:.0%}）"
@@ -297,7 +324,7 @@ def _record_from_ocr(result: dict) -> dict:
 # 卡片的控件 key：rec_<draft_id>_<字段名>。
 # 用 draft_id 区分"这一次解析"，换一句话就要换一套 key，否则控件还留着上次的值。
 _CARD_FIELDS = ("amount", "direction", "category", "date", "time",
-                "merchant", "note", "sub", "save", "cancel")
+                "merchant", "note", "sub", "save", "cancel", "ack")
 
 _EXAMPLES = (
     "午饭 25，和同事 AA",
@@ -450,10 +477,23 @@ def render_confirm_card(record: dict) -> dict | None:
         if amount <= 0:
             st.caption("金额还空着，填上才能记；不想记了就点「取消」。")
 
+        # AI 没把握时，不能让人闭着眼点确认（第 8 天的验收项）。
+        # 判据两条：置信度低于阈值，或者 missing_fields 非空。
+        needs_review = _needs_review(record)
+        acknowledged = True
+        if needs_review:
+            confidence = record.get("confidence")
+            shown = f"{confidence:.0%}" if isinstance(confidence, (int, float)) else "未知"
+            st.error(f"AI 对这次识别没把握（置信度 {shown}），必须逐项核对后才能记账。")
+            acknowledged = st.checkbox(
+                "我已逐项核对金额、类别、时间、商户", key=key("ack")
+            )
+
         btn_save_col, btn_cancel_col, _ = st.columns([1, 1, 3])
         save = btn_save_col.button(
             "✅ 确认记账", type="primary", width="stretch",
-            disabled=amount <= 0, key=key("save"),
+            disabled=(amount <= 0) or (needs_review and not acknowledged),
+            key=key("save"),
         )
         cancel = btn_cancel_col.button("取消", width="stretch", key=key("cancel"))
 
@@ -468,19 +508,16 @@ def render_confirm_card(record: dict) -> dict | None:
 
         if save:
             occurred_at = f"{day.isoformat()} {clock.strftime('%H:%M:%S')}"
-            return {
-                "amount": round(float(amount), 2),
-                "direction": direction,
-                "category": category,
-                "subcategory": (subcategory or "").strip() or None,
-                "merchant": (merchant or "").strip() or None,
-                "note": (note or "").strip() or None,
-                "occurred_at": occurred_at,
-                "confidence": record.get("confidence"),
-                "missing_fields": [],
-                "raw_input": record.get("raw_input"),
-                "source": SOURCE_TEXT,
-            }
+            return _compose_record(
+                record,
+                amount=amount,
+                direction=direction,
+                category=category,
+                occurred_at=occurred_at,
+                merchant=merchant,
+                note=note,
+                subcategory=subcategory,
+            )
 
     return None
 
@@ -488,6 +525,29 @@ def render_confirm_card(record: dict) -> dict | None:
 # ============================================================
 # 六、整页
 # ============================================================
+
+def _compose_record(record: dict, *, amount: float, direction: str, category: str,
+                    occurred_at: str, merchant: str | None, note: str | None,
+                    subcategory: str | None) -> dict:
+    """把卡片上的值组装成入库用的 record。
+
+    ⚠️ source 必须从草稿继承：小票识别传的是 receipt，写死成 text 的话，
+    数据库里就分不出"这张账是拍照来的还是打字来的"——答辩要统计三种录入方式会直接翻车。
+    """
+    return {
+        "amount": round(float(amount), 2),
+        "direction": direction,
+        "category": category,
+        "subcategory": (subcategory or "").strip() or None,
+        "merchant": (merchant or "").strip() or None,
+        "note": (note or "").strip() or None,
+        "occurred_at": occurred_at,
+        "confidence": record.get("confidence"),
+        "missing_fields": [],
+        "raw_input": record.get("raw_input"),
+        "source": record.get("source") or SOURCE_TEXT,
+    }
+
 
 def render() -> None:
     """渲染记账页。"""

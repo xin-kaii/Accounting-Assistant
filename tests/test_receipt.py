@@ -13,6 +13,7 @@ from app.ocr.receipt import (
     ReceiptError,
     _extract_json,
     _normalize,
+    _sniff_image_type,
     _to_datetime,
     extract_receipt,
     needs_manual_review,
@@ -34,6 +35,31 @@ def test_unsupported_mime_rejected():
 def test_oversize_image_rejected():
     with pytest.raises(ReceiptError):
         extract_receipt(b"x" * (5 * 1024 * 1024 + 1))
+
+
+def test_non_image_bytes_rejected_with_clear_message():
+    """.gif / .pdf 改名成 .jpg 是最常见的"假图"，不能直接甩给模型。"""
+    with pytest.raises(ReceiptError, match="不是图片"):
+        extract_receipt(b"PK\x03\x04 this is a zip, renamed to .jpg")
+
+
+def test_truncated_png_rejected():
+    """文件头对、但内容截断的图，要报"打不开"，而不是把模型报错原样抛给用户。"""
+    with pytest.raises(ReceiptError, match="打不开"):
+        extract_receipt(b"\x89PNG\r\n\x1a\n" + b"\x00" * 200)
+
+
+@pytest.mark.parametrize(
+    "head,expected",
+    [
+        (b"\xff\xd8\xff\xe0", "image/jpeg"),
+        (b"\x89PNG\r\n\x1a\n", "image/png"),
+        (b"RIFF\x00\x00\x00\x00WEBPVP8 ", "image/webp"),
+        (b"%PDF-1.4", None),
+    ],
+)
+def test_sniff_image_type(head, expected):
+    assert _sniff_image_type(head + b"rest") == expected
 
 
 # ---------- 模型返回的脏数据 ----------
@@ -69,6 +95,16 @@ def test_missing_amount_is_reported():
     result = _normalize({"amount": None, "confidence": 0.9})
     assert result["amount"] is None
     assert "amount" in result["missing_fields"]
+
+
+def test_paid_wins_over_total():
+    """外卖单上同时有总价和实付时，记账要记实付。"""
+    result = _normalize({"amount": 15.9, "paid": 13.4, "total": 15.9})
+    assert result["amount"] == 13.4
+
+
+def test_falls_back_to_total_when_no_paid():
+    assert _normalize({"amount": None, "total": 36.0})["amount"] == 36.0
 
 
 @pytest.mark.parametrize(
