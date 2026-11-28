@@ -32,3 +32,5 @@ uvicorn[standard]==0.54.0
 
 # ---------- 测试 ----------
 pytest==9.2.0
+# fastapi 的 TestClient 依赖 httpx（只测接口层用）
+httpx==0.29.0
