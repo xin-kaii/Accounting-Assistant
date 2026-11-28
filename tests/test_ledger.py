@@ -14,7 +14,9 @@ from app.services.ledger import (
     add_transaction,
     delete_transaction,
     get_transaction,
+    list_corrections,
     list_transactions,
+    record_correction,
     update_transaction,
 )
 
@@ -203,3 +205,49 @@ def test_delete_存在True_不存在False(db):
     assert delete_transaction(tx_id) is True
     assert get_transaction(tx_id) is None
     assert delete_transaction(tx_id) is False
+
+
+# ---------- record_correction / list_corrections（加分项「越记越准」） ----------
+
+def test_记录修正_查回来是dict不是JSON字符串(db):
+    record_correction("塔斯汀25", {"category": "其他"}, {"category": "餐饮", "subcategory": "快餐"})
+
+    row = list_corrections()[0]
+
+    assert row["raw_input"] == "塔斯汀25"
+    assert row["wrong"] == {"category": "其他"}
+    assert row["correct"] == {"category": "餐饮", "subcategory": "快餐"}
+    assert row["created_at"].startswith("2026-")
+
+
+def test_修正_AI没给答案时wrong可以为空(db):
+    record_correction("咖啡 30", None, {"category": "餐饮"})
+
+    row = list_corrections()[0]
+
+    assert row["wrong"] is None
+    assert row["correct"] == {"category": "餐饮"}
+
+
+def test_修正_必填校验(db):
+    with pytest.raises(ValueError):
+        record_correction("   ", {"category": "其他"}, {"category": "餐饮"})   # 原话空白 = 没传
+    with pytest.raises(ValueError):
+        record_correction("塔斯汀25", {"category": "其他"}, {})                # 没改任何东西
+    with pytest.raises(ValueError):
+        record_correction("塔斯汀25", "不是dict", {"category": "餐饮"})
+
+
+def test_修正_不可序列化的对象报错(db):
+    with pytest.raises(ValueError):
+        record_correction("塔斯汀25", {"at": date(2026, 11, 20)}, {"category": "餐饮"})
+
+
+def test_修正列表_新的在前_limit夹值(db):
+    record_correction("第一句", None, {"category": "餐饮"})
+    record_correction("第二句", None, {"category": "交通"})
+    record_correction("第三句", None, {"category": "购物"})
+
+    rows = list_corrections(limit=2)
+    assert [r["raw_input"] for r in rows] == ["第三句", "第二句"]
+    assert len(list_corrections(limit=0)) == 1    # 0/负数夹成 1，不是「不限」

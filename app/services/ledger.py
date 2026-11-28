@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 
 from app.constants import (
@@ -333,6 +334,82 @@ def count_transactions() -> int:
     return int(row[0])
 
 
-def record_correction(raw_input: str, wrong: dict, correct: dict) -> None:
-    """记一次用户修正，给 B 的 prompt 当 few-shot 例子用（加分项，第 10 天后有空再做）。"""
-    raise NotImplementedError("TODO(A) 加分项，可跳过")
+def record_correction(raw_input: str, wrong: dict | None, correct: dict) -> int:
+    """记一次用户修正（加分项「越记越准」）：AI 认错了、用户改对了，存下这个对照。
+
+    什么时候调：用户在确认卡片上改完 AI 的识别结果之后——
+        update_transaction(tx_id, category="餐饮")                                    # 先改账单
+        record_correction("塔斯汀25", {"category": "其他"}, {"category": "餐饮"})      # 再记修正
+    （update_transaction 的 docstring 里说的"写进 corrections 表"就是这个函数。）
+
+    参数：
+        raw_input : 用户原话（"塔斯汀25"），必须非空白——它是 few-shot 例子的关键
+        wrong     : AI 最初认错的结果；允许 None / {}（AI 没给出答案时，库里存 NULL）
+        correct   : 用户改成的结果，必须是非空 dict
+
+    返回新记录的 id。同一句原话多次修正会产生多条，B 取最新的即可
+    （list_corrections 新的在前）。
+
+    JSON 序列化 ensure_ascii=False：B 直接读出来就是中文，不用再转。
+    """
+    text = str(raw_input or "").strip()
+    if not text:
+        raise ValueError("raw_input 不能为空（用户的原话是 few-shot 例子的关键）")
+    if not isinstance(correct, dict) or not correct:
+        raise ValueError(f"correct 必须是非空 dict，收到 {correct!r}")
+    if wrong is not None and not isinstance(wrong, dict):
+        raise ValueError(f"wrong 必须是 dict 或 None，收到 {wrong!r}")
+
+    try:
+        wrong_json = json.dumps(wrong, ensure_ascii=False) if wrong else None
+        correct_json = json.dumps(correct, ensure_ascii=False)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"wrong / correct 里有没法转 JSON 的对象：{e}") from None
+
+    with tx() as conn:
+        cur = conn.execute(
+            """INSERT INTO corrections (raw_input, wrong_json, correct_json, created_at)
+               VALUES (?, ?, ?, ?)""",
+            (text, wrong_json, correct_json, now_str()),
+        )
+        return int(cur.lastrowid)
+
+
+def list_corrections(limit: int = 50) -> list[dict]:
+    """最近的用户修正记录，新的在前。B 从这里挑 few-shot 例子塞进 prompt。
+
+    返回：[{"id": 1, "raw_input": "塔斯汀25",
+            "wrong": {"category": "其他"} 或 None,     # dict，不是 JSON 字符串
+            "correct": {"category": "餐饮"},
+            "created_at": "2026-11-28 21:00:00"}, ...]
+
+    limit 夹到 1~200。库里的 JSON 万一坏了不抛异常：wrong 降级成 None、
+    correct 保底给原文——B 和页面拿到的永远是能直接用的结构。
+    """
+    with tx() as conn:
+        rows = conn.execute(
+            """SELECT id, raw_input, wrong_json, correct_json, created_at
+               FROM corrections ORDER BY id DESC LIMIT ?""",
+            (max(1, min(int(limit), 200)),),
+        ).fetchall()
+
+    result = []
+    for row in rows:
+        try:
+            wrong = json.loads(row["wrong_json"]) if row["wrong_json"] else None
+        except json.JSONDecodeError:
+            wrong = None
+        try:
+            correct = json.loads(row["correct_json"])
+        except json.JSONDecodeError:
+            correct = row["correct_json"]
+        result.append(
+            {
+                "id": int(row["id"]),
+                "raw_input": row["raw_input"],
+                "wrong": wrong,
+                "correct": correct,
+                "created_at": row["created_at"],
+            }
+        )
+    return result
