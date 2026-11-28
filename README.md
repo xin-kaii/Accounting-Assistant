@@ -29,7 +29,7 @@ accounting-assistant/
 │       └── main.py          Streamlit 入口
 ├── scripts/                 工具脚本（生成示例数据）
 ├── tests/                   单元测试
-├── docs/                    01 分工排期 / 02 参考项目 / 03 问题解决 / 04 未完成取舍 / 05 任务板
+├── docs/                    01 分工排期 / 02 参考项目 / 03 问题解决 / 04 未完成取舍 / 05 任务板 / 06 答辩素材
 ├── data/                    运行时数据库（不提交）
 ├── assets/                  截图、架构图（README 里要显示）
 ├── samples/receipts/        测试用的小票图片
@@ -99,7 +99,7 @@ pip freeze > requirements.lock.txt
 > 用 cmd 执行这条命令，或者 PowerShell 里改成：
 > `pip freeze | Out-File -Encoding utf8 requirements.lock.txt`
 
-> 仓库里已经带了一份 `requirements.lock.txt`（57 个包，含全部间接依赖）。
+> 仓库里已经带了一份 `requirements.lock.txt`（59 个包，含全部间接依赖）。
 > 想要和使用者**完全一致**的环境，可以改用它：`pip install -r requirements.lock.txt`
 
 ### 2. 配密钥
@@ -119,13 +119,19 @@ cp .env.example .env        # macOS / Linux
 python scripts/check_models.py
 ```
 
-输出里 `text : OK` 和 `vision : OK` 才算配好。不通过时它会告诉你原因（Key 错 / 模型名错 / 额度不足）。
+输出里 `text : OK` 才算文本模型配好（`vision` 要带一张图才会真测，不带图会显示 SKIP）：
+
+```bash
+python scripts/check_models.py samples/receipts/sample_01_shaxian.png
+```
+
+不通过时它会告诉你原因（Key 错 / 模型名错 / 额度不足）。
 
 ### 4. 初始化数据库 + 示例数据
 
 ```bash
 python -c "from app.db.conn import init_db; init_db()"
-python scripts/generate_sample_data.py
+python scripts/generate_sample_data.py --import   # 生成 CSV 并灌入数据库（重复执行不会灌重）
 ```
 
 ### 5. 启动
@@ -149,6 +155,7 @@ docker compose up -d --build
 ```bash
 docker build -t accounting-assistant .
 docker run -p 8501:8501 --env-file .env -v "%cd%/data:/app/data" accounting-assistant
+# macOS / Linux：把 %cd% 换成 $(pwd)
 ```
 
 ---
@@ -208,6 +215,7 @@ docker run -p 8501:8501 --env-file .env -v "%cd%/data:/app/data" accounting-assi
 > 演示不会因为断网或额度用完而翻车。
 >
 > **一键端到端复验**：`python scripts/check_e2e.py`（13 项检查，输入→解析→确认→入库→账单可见）。
+> **单元测试**：`python -m pytest`（全部离线：不联网、不调模型、不花钱，用的是临时数据库，不碰演示数据）。
 
 ---
 
