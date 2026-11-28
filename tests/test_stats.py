@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from app.services.ledger import add_transaction
-from app.services.stats import get_stats
+from app.services.stats import compare_months, get_stats
 
 
 def _expense(occurred_at: str, amount: float, category: str, **extra) -> None:
@@ -130,3 +130,70 @@ def test_非法日期_抛ValueError(db):
     for bad in ("2026-11", "2026年11月", "昨天", ""):
         with pytest.raises(ValueError):
             get_stats(bad, "2026-11-30")
+
+
+# ---------- compare_months（加分项） ----------
+
+def test_两个月对比_diff是a减b_方向为up(db):
+    # 想说"这个月比上月多花了 300"：a 传本月、b 传上月
+    _expense("2026-11-05 12:00:00", 600.0, "餐饮")
+    _expense("2026-11-06 12:00:00", 150.0, "交通")      # a 月合计 750
+    _expense("2026-10-10 12:00:00", 450.0, "餐饮")      # b 月合计 450
+
+    result = compare_months("2026-11", "2026-10")
+
+    assert result["a"] == {"month": "2026-11", "total": 750.0, "count": 2}
+    assert result["b"] == {"month": "2026-10", "total": 450.0, "count": 1}
+    assert result["diff"]["total"] == 300.0 and result["diff"]["direction"] == "up"
+    assert result["diff"]["count"] == 1
+
+
+def test_两个月对比_类别是并集_缺的一侧补0_按差值绝对值倒序(db):
+    # 餐饮差 |600-450|=150 排第一；交通只在 a 月有（b 补 0）；购物只在 b 月有
+    _expense("2026-11-05 12:00:00", 600.0, "餐饮")
+    _expense("2026-11-06 12:00:00",  50.0, "交通")
+    _expense("2026-10-10 12:00:00", 450.0, "餐饮")
+    _expense("2026-10-11 12:00:00", 400.0, "购物")      # 购物差 -400，排最前
+
+    result = compare_months("2026-11", "2026-10")
+
+    assert result["by_category"] == [
+        {"category": "购物", "a": 0.0, "b": 400.0, "diff": -400.0},
+        {"category": "餐饮", "a": 600.0, "b": 450.0, "diff": 150.0},
+        {"category": "交通", "a": 50.0, "b": 0.0, "diff": 50.0},
+    ]
+
+
+def test_两个月对比_少花时方向down_持平flat_自己比自己报错(db):
+    _expense("2026-11-05 12:00:00", 100.0, "餐饮")
+    _expense("2026-10-10 12:00:00", 300.0, "餐饮")
+
+    result = compare_months("2026-11", "2026-10")
+    assert result["diff"]["direction"] == "down" and result["diff"]["total"] == -200.0
+
+    # 持平：两个不同月份，合计恰好相同
+    _expense("2026-09-05 12:00:00", 100.0, "餐饮")
+    same = compare_months("2026-11", "2026-09")
+    assert same["diff"]["direction"] == "flat" and same["diff"]["total"] == 0.0
+
+    # 自己比自己：没法区分哪条算 a 哪条算 b，必须报错而不是返回假数据
+    with pytest.raises(ValueError):
+        compare_months("2026-11", "2026-11")
+
+
+def test_两个月对比_空月只有单侧数据(db):
+    _expense("2026-11-05 12:00:00", 320.0, "餐饮")
+
+    result = compare_months("2026-11", "2026-10")  # 10 月一笔没有
+
+    assert result["b"] == {"month": "2026-10", "total": 0.0, "count": 0}
+    assert result["by_category"] == [{"category": "餐饮", "a": 320.0, "b": 0.0, "diff": 320.0}]
+    assert result["diff"]["direction"] == "up"
+
+
+def test_两个月对比_非法或未补零月份(db):
+    with pytest.raises(ValueError):
+        compare_months("2026年11月", "2026-10")
+    # 未补零 "2026-1" 要归一化成 "2026-01"（parse_month 统一兜）
+    empty = compare_months("2026-1", "2026-10")
+    assert empty["a"]["month"] == "2026-01" and empty["a"]["total"] == 0.0

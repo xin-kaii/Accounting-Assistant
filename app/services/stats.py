@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from app.dates import parse_day
+from app.dates import parse_day, parse_month
 from app.db.conn import tx
 from app.money import to_yuan
 
@@ -139,9 +139,87 @@ def get_stats(
 
 
 def compare_months(month_a: str, month_b: str) -> dict:
-    """两个月对比（加分项）：{"a": {...}, "b": {...}, "diff": {...}, "by_category": [...]}
+    """两个月消费对比（加分项）。diff = a - b，
+    想说"这个月比上月多花了 300"，就 a 传本月、b 传上月。
 
-    答辩时能讲"这个月比上月多花了 300，主要在餐饮"。
-    做不完可以不做。
+    month_a / month_b : 'YYYY-MM'（未补零的 "2026-1" 会先归一化成 "2026-01"）
+
+    返回：
+    {
+        "a": {"month": "2026-11", "total": 1350.0, "count": 10},   # a 月的合计
+        "b": {"month": "2026-10", "total": 1050.0, "count": 8},    # b 月的合计
+        "diff": {
+            "total": 300.0,          # a - b，负数 = 比 b 月花得少
+            "count": 2,
+            "direction": "up",       # up = 多花 / down = 少花 / flat = 持平
+        },
+        "by_category": [             # 两月类别的并集，缺的一侧补 0，按 |diff| 从大到小
+            {"category": "餐饮", "a": 920.0, "b": 600.0, "diff": 320.0},
+            ...
+        ],
+    }
+
+    答辩话术："这个月比上月多花了 300，主要在餐饮"——by_category 第一条就是。
     """
-    raise NotImplementedError("TODO(A) 加分项，可跳过")
+    month_a = parse_month(month_a, "month_a")
+    month_b = parse_month(month_b, "month_b")
+    # 自己比自己没有可比性，而且没法区分哪条数据算 a 哪条算 b（都等于 month_a），
+    # 静默返回"多花全部"这种假数据还不如直接报错
+    if month_a == month_b:
+        raise ValueError(f"month_a 和 month_b 相同（{month_a}），没有可比性；看单月合计用 get_stats()")
+
+    with tx() as conn:
+        # 两个月一起查，一条 GROUP BY 就够：月份前 7 位 + 类别。
+        # 在「分」上求和与相减（整数精确），最后才 to_yuan 转元。
+        rows = conn.execute(
+            """SELECT substr(occurred_at, 1, 7) AS month,
+                      category,
+                      SUM(amount) AS cents,
+                      COUNT(*) AS cnt
+               FROM transactions
+               WHERE direction = 'expense'
+                 AND substr(occurred_at, 1, 7) IN (?, ?)
+               GROUP BY substr(occurred_at, 1, 7), category""",
+            (month_a, month_b),
+        ).fetchall()
+
+    by_cat_cents: dict[str, dict[str, int]] = {}
+    totals = {
+        "a": {"cents": 0, "count": 0},
+        "b": {"cents": 0, "count": 0},
+    }
+    for row in rows:
+        side = "a" if row["month"] == month_a else "b"
+        cents = int(row["cents"])
+        by_cat_cents.setdefault(row["category"], {"a": 0, "b": 0})[side] = cents
+        totals[side]["cents"] += cents
+        totals[side]["count"] += int(row["cnt"])
+
+    # 类别按 |diff| 从大到小排（分上排序，精确），缺的一侧已经是 0
+    ranked = sorted(
+        by_cat_cents.items(),
+        key=lambda item: -abs(item[1]["a"] - item[1]["b"]),
+    )
+    by_category = [
+        {
+            "category": category,
+            "a": to_yuan(cents["a"]),
+            "b": to_yuan(cents["b"]),
+            "diff": to_yuan(cents["a"] - cents["b"]),
+        }
+        for category, cents in ranked
+    ]
+
+    diff_cents = totals["a"]["cents"] - totals["b"]["cents"]
+    direction = "flat" if diff_cents == 0 else ("up" if diff_cents > 0 else "down")
+
+    return {
+        "a": {"month": month_a, "total": to_yuan(totals["a"]["cents"]), "count": totals["a"]["count"]},
+        "b": {"month": month_b, "total": to_yuan(totals["b"]["cents"]), "count": totals["b"]["count"]},
+        "diff": {
+            "total": to_yuan(diff_cents),
+            "count": totals["a"]["count"] - totals["b"]["count"],
+            "direction": direction,
+        },
+        "by_category": by_category,
+    }
