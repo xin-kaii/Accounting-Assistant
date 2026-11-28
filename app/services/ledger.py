@@ -74,7 +74,12 @@ def _parse_amount(value: object) -> int:
         raise ValueError(f"amount 必须是数字，收到 {value!r}") from None
     if yuan <= 0:
         raise ValueError(f"amount 必须大于 0，收到 {yuan}")
-    return to_cents(yuan)
+    cents = to_cents(yuan)
+    # 不足 1 分的金额（0.001 元）转分后是 0，直撞 schema 的 CHECK (amount > 0)，
+    # 会抛裸 sqlite3.IntegrityError。按契约兜成 ValueError。
+    if cents <= 0:
+        raise ValueError(f"amount 太小，不足 1 分，收到 {yuan}")
+    return cents
 
 
 def _parse_direction(value: object) -> str:
@@ -319,6 +324,13 @@ def delete_transaction(tx_id: int) -> bool:
     with tx() as conn:
         cur = conn.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
         return cur.rowcount > 0
+
+
+def count_transactions() -> int:
+    """库里的账单总数。侧边栏状态块用（"已记账 N 笔"）。"""
+    with tx() as conn:
+        row = conn.execute("SELECT COUNT(*) FROM transactions").fetchone()
+    return int(row[0])
 
 
 def record_correction(raw_input: str, wrong: dict, correct: dict) -> None:
