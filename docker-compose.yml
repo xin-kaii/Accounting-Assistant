@@ -3,8 +3,8 @@
 services:
   app:
     build: .
-    image: booking-ai:latest
-    container_name: booking-ai
+    image: accounting-assistant:latest
+    container_name: accounting-assistant
     ports:
       - "8501:8501"
     env_file:
