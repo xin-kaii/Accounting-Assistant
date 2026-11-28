@@ -558,7 +558,8 @@ def _compose_record(record: dict, *, amount: float, direction: str, category: st
         "note": (note or "").strip() or None,
         "occurred_at": occurred_at,
         "confidence": record.get("confidence"),
-        "missing_fields": [],
+        # missing_fields 是确认卡片（草稿）的展示字段，不是入库契约——
+        # add_transaction 对契约外字段直接报错，这里不能把它带出去。
         "raw_input": record.get("raw_input"),
         "source": record.get("source") or SOURCE_TEXT,
     }

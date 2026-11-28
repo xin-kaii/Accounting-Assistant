@@ -52,6 +52,13 @@ def test_add_source_传错要报错_不悄悄改成manual(db):
         _add(source="abc")
 
 
+def test_add_契约外字段直接报错_不悄悄忽略(db):
+    # 和 update_transaction 的白名单同一条纪律：拼错的 amout 被悄悄忽略 = 页面以为存了、
+    # 其实没存。add 也必须一样大声报错。
+    with pytest.raises(ValueError):
+        _add(amout=99.0)
+
+
 # ---------- add_transaction：默认值与归一化 ----------
 
 def test_add_默认值_category其他_source_manual(db):

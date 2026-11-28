@@ -103,3 +103,32 @@ def test_统计与预算端点(db):
 
     deleted = client.delete("/budgets/2026-11", params={"category": "餐饮"})
     assert deleted.json()["deleted"] is True
+
+
+def test_记账带契约外字段_400而不是静默忽略(db):
+    # 服务层白名单（add_transaction）+ ValueError→400：拼错的字段不能被悄悄吞掉
+    resp = _client().post(
+        "/transactions",
+        json={"occurred_at": "2026-11-05 12:00:00", "amount": 5.0,
+              "direction": "expense", "amout": 99.0},
+    )
+    assert resp.status_code == 400
+    assert "amout" in resp.json()["detail"]
+
+
+def test_0元预算超支_ratio的inf_返回200和合法JSON(db):
+    # 服务层契约：0 元预算 + 有支出 -> ratio = inf（预算页靠它显示 ∞）。
+    # 但 JSON 标准不允许 Infinity，响应层统一转 null，绝不能 500。
+    client = _client()
+    client.post("/budgets", json={"month": "2026-11", "amount": 0, "category": "通讯"})
+    client.post(
+        "/transactions",
+        json={"occurred_at": "2026-11-05 12:00:00", "amount": 30.0,
+              "direction": "expense", "category": "通讯"},
+    )
+
+    resp = client.get("/budgets/2026-11/check")
+
+    assert resp.status_code == 200
+    row = resp.json()[0]
+    assert row["level"] == "over" and row["ratio"] is None

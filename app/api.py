@@ -22,6 +22,10 @@
 
 from __future__ import annotations
 
+import json
+import math
+from typing import Any
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -36,7 +40,41 @@ from app.services.ledger import (
 )
 from app.services.stats import compare_months, get_stats
 
-app = FastAPI(title="记账助手 API", version="0.1.0")
+def _json_safe(value: Any) -> Any:
+    """递归把非有限浮点（Infinity / NaN）换成 null。
+
+    check_budget 在「0 元预算 + 有支出」时 ratio = inf —— 服务层契约如此
+    （预算页靠 inf 显示 ∞，测试也锁了它），但 JSON 标准不允许 Infinity，
+    starlette 的 allow_nan=False 会让它直接 ValueError -> 500。
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+class SafeJSONResponse(JSONResponse):
+    """所有路由共用的响应类：先消毒再序列化。
+
+    挂在 default_response_class 上，路由函数依旧零逻辑（纪律 1：
+    跑偏的标准是"路由函数里出现判断或计算"，序列化不属于业务）。
+    """
+
+    def render(self, content: Any) -> bytes:
+        return json.dumps(
+            _json_safe(content),
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+
+app = FastAPI(title="记账助手 API", version="0.1.0",
+              default_response_class=SafeJSONResponse)
 
 
 @app.exception_handler(ValueError)

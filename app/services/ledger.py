@@ -121,6 +121,22 @@ def _row_to_dict(row) -> dict:
     return item
 
 
+# add_transaction 认的键。白名单而不是黑名单，和 update_transaction 的
+# _UPDATABLE 同一条纪律：拼错的键（amout 之类）直接报错，而不是被悄悄吞掉。
+_ADD_FIELDS = (
+    "occurred_at",
+    "amount",
+    "direction",
+    "category",
+    "subcategory",
+    "merchant",
+    "note",
+    "source",
+    "raw_input",
+    "confidence",
+)
+
+
 def add_transaction(record: dict) -> int:
     """存一笔账，返回新的 id。
 
@@ -139,7 +155,7 @@ def add_transaction(record: dict) -> int:
         raw_input   : 默认 None（C 的页面传用户原话或 OCR 原文）
         confidence  : 默认 None（非数字存 NULL，超出 0~1 夹到边界）
 
-    raise ValueError：下面四种情况都要抛，不要静默兜底
+    raise ValueError：下面五种情况都要抛，不要静默兜底
         1. amount <= 0
         2. direction 不是 expense / income
         3. occurred_at 是空值、或真解析不出来（"昨天"这种）
@@ -147,9 +163,16 @@ def add_transaction(record: dict) -> int:
            如果把它悄悄改成 "manual"，C 写错了也没人知道，
            答辩统计「三种录入方式各占多少」时就分不出来了。
            口径：默认值兜「没传」，报错兜「传错」。
+        5. record 里有契约外的字段（比如拼错的 amout）—— 悄悄忽略的话，
+           页面以为存了、其实没存，和 update 的白名单是同一条纪律。
 
     TODO(A) 第 3-4 天
     """
+    # ---------- 0. 契约外字段：报错，不悄悄忽略 ----------
+    unknown = set(record) - set(_ADD_FIELDS)
+    if unknown:
+        raise ValueError(f"add_transaction 不认识这些字段：{sorted(unknown)}")
+
     # ---------- 1. 必填三项：时间 / 金额 / 方向 ----------
     occurred_at = _parse_occurred_at(record.get("occurred_at"))
     amount_cents = _parse_amount(record.get("amount"))

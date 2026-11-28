@@ -8,7 +8,8 @@ if [ ! -x ".venv/bin/python" ]; then
     echo "先执行："
     echo "    python3 -m venv .venv"
     echo "    source .venv/bin/activate"
-    echo "    pip install -r requirements.txt"
+    echo "    pip install -r requirements.lock.txt"
+    echo "    （网络慢可加镜像源：-i https://mirrors.aliyun.com/pypi/simple/）"
     exit 1
 fi
 
