@@ -19,7 +19,7 @@
 - 只给原价+折扣、不给实付：100元打8折
 - 一条消息多笔：午饭25，打车30
 - 万/千简写：3万5（当前只认 3万，不认后面的 5 千）
-- 绝对日期：11月20号 只用于屏蔽金额，occurred_at 仍按今天
+- 绝对日期：11月20号 会写入 occurred_at（年份取今年）；2月30号等非法日期回退今天
 """
 
 from __future__ import annotations
@@ -105,6 +105,10 @@ EXPENSE_NEAR_CUES: tuple[str, ...] = (
     "支付", "消费", "买", "交", "缴", "转给",
 )
 EXPENSE_WINDOW = 3
+# 券面额：金额后紧跟"元券/元优惠券"（如"3元券"），是券的面值不是消费金额
+COUPON_FACE_RE = re.compile(r"(?:优惠)?券")
+# 中文绝对日期："11月20号/11月20日"（用于 occurred_at，年份取今年）
+CN_DATE_RE = re.compile(r"(?<!\d)(\d{1,2})月(\d{1,2})[号日](?!\d)")
 
 
 def _mask_non_amounts(text: str) -> str:
@@ -125,11 +129,12 @@ def _mask_non_amounts(text: str) -> str:
 def _pick_amount(text: str) -> tuple[float | None, int, int]:
     """从一句话里选一个金额；返回 (金额, 起始位置, 结束位置)。
 
-    多个候选且没有“实付”等明确线索时返回 (None, -1, -1)。
-    mock 的原则：宁可不猜，也不把优惠券、原价、日期当成实际金额。
+"主价格 + 优惠"会取主价格（奶茶15，用券减3 -> 15），不整句放弃；
+    坏金额仍返回 (None, -1, -1)：原价50 / 优惠20 / 满100 / 减20 / 3元券（券面额）。
+    多个等分候选分不清哪个是主金额时也返回 (None, -1, -1)。
     """
     amount_text = _mask_non_amounts(text)
-    candidates = []
+    candidates: list[dict] = []
     ignore_until = -1
     for m in AMOUNT_CANDIDATE_RE.finditer(amount_text):
         if m.start() < ignore_until:
@@ -150,26 +155,41 @@ def _pick_amount(text: str) -> tuple[float | None, int, int]:
         before = amount_text[max(0, m.start() - 4):m.start()]
         after = amount_text[m.end():m.end() + 4]
         actual = any(cue in before for cue in ACTUAL_CUES)
-        negative = any(cue in before for cue in NEGATIVE_CUES) or any(
-            cue in after for cue in NEGATIVE_CUES
-        ) or any(before.endswith(cue) for cue in NEGATIVE_EDGE_CUES)
-        score = (3 if has_unit else 0) + (4 if actual else 0) - (2 if negative else 0)
-        candidates.append((value, score, actual, negative, m.start(), m.end()))
+        # negative 拆成"金额前/金额后"：原价50/满100减20 的修饰词在金额前，是坏金额；
+        # "奶茶15，用券减3"的"券"在 15 后面，15 本身仍是主价格，不能整句放弃
+        neg_before = any(cue in before for cue in NEGATIVE_CUES) or any(
+            before.endswith(cue) for cue in NEGATIVE_EDGE_CUES
+        )
+        neg_after = any(cue in after for cue in NEGATIVE_CUES)
+        # 券面额："3元券/3元优惠券"，金额本身是券的面值，不是消费
+        after_full = amount_text[m.end():m.end() + 8]
+        coupon_face = bool(has_unit and COUPON_FACE_RE.match(after_full))
+        score = (3 if has_unit else 0) + (4 if actual else 0) - (
+            2 if (neg_before or neg_after) else 0
+        )
+        candidates.append({
+            "value": value, "score": score, "actual": actual,
+            "neg_before": neg_before, "coupon_face": coupon_face,
+            "start": m.start(), "end": m.end(),
+        })
 
     if not candidates:
         return None, -1, -1
-    # 句子里只有优惠/原价/小费，没有任何“实付”类线索：宁可不猜
-    if not any(c[2] for c in candidates) and any(c[3] for c in candidates):
+    # 先排除"坏金额"：修饰词在金额前（原价50/优惠20/满100/减20）或券面额（3元券）
+    # 有"实付/券后"等线索时，金额前的负面词失效（券后实付25 -> 25，不是券面额）
+    usable = [
+        c for c in candidates
+        if (c["actual"] or not c["neg_before"]) and not c["coupon_face"]
+    ]
+    if not usable:
         return None, -1, -1
-
-    best_score = max(c[1] for c in candidates)
-    best = [c for c in candidates if c[1] == best_score]
-    if len(best) > 1 and len({c[0] for c in best}) > 1:
+    best_score = max(c["score"] for c in usable)
+    best = [c for c in usable if c["score"] == best_score]
+    # 同分且金额不同：分不清哪个是主金额，宁可不猜（多笔账交给页面人工确认）
+    if len(best) > 1 and len({c["value"] for c in best}) > 1:
         return None, -1, -1
     chosen = best[0]
-    if chosen[3] and not chosen[2]:
-        return None, -1, -1
-    return chosen[0], chosen[4], chosen[5]
+    return chosen["value"], chosen["start"], chosen["end"]
 
 
 def _extract_amount(text: str) -> float | None:
@@ -257,12 +277,13 @@ def parse_record(text: str) -> dict:
     金额策略：
         1. 先屏蔽日期、时间、订单/电话/房间号、楼层/线路/数量等非金额数字
         2. 从剩余候选里选“实际支付”：只有一个候选就用；多个候选优先“实付/花了/充值”等线索
-        3. 多个候选且没有明确线索 -> amount=None，missing_fields 加 "amount"（交给页面人工确认）
+        3. "主价格 + 优惠"取主价格（奶茶15，用券减3 -> 15）；原价/满减/券面额排除掉
+        4. 多个等分候选分不清主金额 -> amount=None，missing_fields 加 "amount"（交给页面人工确认）
     方向：
         工资/收入/报销/退款/奖金/利息/分红/稿费/兼职/外快/返现/中奖/补贴/加班费/压岁钱/收到红包
         必须紧贴选中的金额才判 income；其余默认 expense；支出词紧贴金额时优先 expense
     类别：CATEGORY_KEYWORDS 扫关键词，没中就 DEFAULT_CATEGORY
-    时间：昨天/前天/今天
+    时间：绝对日期（11月20号，年份取今年）> 前天 > 昨天 > 今天
     置信度：金额 +（类别或收入方向）命中 = 0.9，否则 0.5
     """
     # ① 抓金额：先屏蔽非金额数字，再从候选里选实际支付；同时保留位置供方向判断
@@ -280,9 +301,15 @@ def parse_record(text: str) -> dict:
             hit_keyword = True
             break
 
-    # ④ 定时间：昨天/前天/今天
+    # ④ 定时间：绝对日期（11月20号）> 前天 > 昨天 > 今天
     now = datetime.now()
-    if "前天" in text:
+    m_date = CN_DATE_RE.search(text)
+    if m_date:
+        try:
+            day = now.replace(month=int(m_date.group(1)), day=int(m_date.group(2)))
+        except ValueError:
+            day = now  # 非法日期（如2月30号）回退今天
+    elif "前天" in text:
         day = now - timedelta(days=2)
     elif "昨天" in text:
         day = now - timedelta(days=1)
