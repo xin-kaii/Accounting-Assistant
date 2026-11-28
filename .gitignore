@@ -51,3 +51,9 @@ _*.log
 samples/receipts/real_*.jpg
 samples/receipts/real_*.jpeg
 samples/receipts/real_*.png
+
+# ===== pytest 临时目录 =====
+# 没设 TEMP 的 Git Bash 里，pytest 会把临时目录建到项目根目录
+pytest-of-*/
+# tests/conftest.py 用 mkdtemp(prefix="ledger_test_")，万一落在项目根目录也别提交
+ledger_test_*/

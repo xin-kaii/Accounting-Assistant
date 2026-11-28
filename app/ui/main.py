@@ -21,6 +21,8 @@ if str(ROOT) not in sys.path:
 
 import streamlit as st  # noqa: E402
 
+from app.config import llm_ready, vlm_ready  # noqa: E402
+from app.services.ledger import count_transactions  # noqa: E402
 from app.ui.page_bills import render as render_bills  # noqa: E402
 from app.ui.page_budget import render as render_budget  # noqa: E402
 from app.ui.page_chat import render as render_chat  # noqa: E402
@@ -35,8 +37,17 @@ with st.sidebar:
     st.caption("2026 GDUF · 方向一 · 选题 A")
     st.divider()
 
-    # 第 9 天之后由 A 补：显示模型是否已配置、当前库里有几笔账
-    st.caption("状态：骨架阶段")
+    # 数据与模型状态（A）
+    try:
+        st.caption(f"📒 已记账 {count_transactions()} 笔")
+    except Exception:
+        # 全新克隆还没跑 init_db（data/ 里只有 .gitkeep），侧边栏不能崩
+        st.caption("📒 数据库还没初始化")
+
+    llm_ok = llm_ready()
+    st.caption(f"{'✅' if llm_ok else '⚪'} 文本模型：{'已配置' if llm_ok else '未配置（走离线兜底）'}")
+    vlm_ok = vlm_ready()
+    st.caption(f"{'✅' if vlm_ok else '⚪'} 视觉模型：{'已配置' if vlm_ok else '未配置（图片识别不可用）'}")
 
     st.divider()
     st.caption("团队：A 数据+统计预算页 / B AI+对话页 / C 图片+记账账单页")

@@ -1,6 +1,13 @@
 # A 负责。第 5 天：能 build + run；第 11 天完善：非 root、健康检查、时区、镜像体积。
 # 用法：docker compose up -d --build
-FROM python:3.11-slim
+#
+# 3.13 对齐本地实测环境：requirements.lock.txt 是在 Python 3.13.9 上生成的，
+# 镜像里的 Python 版本要和"测过的组合"一致，不然等于跑一个没验证过的环境。
+# 基础镜像版本做成可覆盖的（ARG 必须放在 FROM 之前）：
+#   默认   docker compose build                          -> python:3.13-slim
+#   离线   docker build --build-arg PYTHON_TAG=3.11 .    -> 用本地缓存的 3.11（国内拉不动 docker.io 时的退路）
+ARG PYTHON_TAG=3.13
+FROM python:${PYTHON_TAG}-slim
 
 # ---------- 运行时环境 ----------
 ENV PYTHONUNBUFFERED=1 \
