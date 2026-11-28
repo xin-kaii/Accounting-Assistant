@@ -91,8 +91,8 @@ pip install -r requirements.txt
 pip freeze > requirements.lock.txt
 ```
 
-> ?? **PowerShell ?? `>` ???? UTF-16 ??**?GitHub ?????????
-> ? cmd ????????? PowerShell ????
+> ⚠️ **PowerShell 的 `>` 重定向默认输出 UTF-16 编码**，GitHub 上显示会是乱码。
+> 请改用 cmd，或在 PowerShell 里加编码参数：
 > `pip freeze | Out-File -Encoding utf8 requirements.lock.txt`
 
 > 仓库里已经带了一份 `requirements.lock.txt`（57 个包，含全部间接依赖）。
